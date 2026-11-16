@@ -1,0 +1,53 @@
+{
+  "name": "@local/personal-agent-core",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Source-backed memory, persistent task ledger, worker routing, and Codex App Server control for DSH.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "*.js",
+    "lib/**/*.js",
+    "assets/*.mp4",
+    "schema.sql",
+    "cordis.patch.yml",
+    "README.md",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:contract": "node --test test/adapter.test.js",
+    "check": "node --check index.js && node --check client.js && node --test test/*.test.js"
+  },
+  "dependencies": {
+    "ws": "8.22.2"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller"
+      ]
+    }
+  }
+}

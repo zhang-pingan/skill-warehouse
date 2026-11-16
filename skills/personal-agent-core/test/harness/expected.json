@@ -1,0 +1,34 @@
+{
+  "analysisRecorded": true,
+  "internalState": "completed",
+  "workerPreset": [
+    {
+      "agentPreset": "cordis"
+    }
+  ],
+  "workerState": "succeeded",
+  "taskState": "active",
+  "resultEvidence": true,
+  "acceptanceState": "pending",
+  "childTerminal": "completed",
+  "qualityRecorded": true,
+  "analysisHidden": true,
+  "extractionRecorded": true,
+  "memoryRecallVerified": true,
+  "memoryInitializationVerified": true,
+  "extractionReferencesVerified": true,
+  "extractionRepairVerified": true,
+  "historyRetrievalVerified": true,
+  "sessionTaskOwnershipVerified": true,
+  "taskExtractionRepairVerified": true,
+  "taskOwnershipRepairVerified": true,
+  "failurePaginationVerified": true,
+  "taskEntityRepairVerified": true,
+  "taskCandidateAuthorityVerified": true,
+  "supplementaryPaginationVerified": true,
+  "malformedOutputRepairVerified": true,
+  "batchFailureIsolationVerified": true,
+  "staleTaskErrorIsolationVerified": true,
+  "publishedTaskIdentityRepairVerified": true,
+  "deletedTaskRetryResetVerified": true
+}

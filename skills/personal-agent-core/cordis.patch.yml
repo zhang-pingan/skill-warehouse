@@ -1,0 +1,10 @@
+- insert:
+    - id: personal-agent-core
+      name: '@local/personal-agent-core'
+      config:
+        historyRead: true
+        taskNative: true
+        codexConnect: false
+        codexMutations: false
+        allowedWorkspaceRoots:
+          - /Users/chelaile/Documents/deepseek-harness/default-workspace
