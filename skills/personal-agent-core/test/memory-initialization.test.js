@@ -40,7 +40,7 @@ test('initialization empties memory and dependent records, preserves preferences
   const events = [{ seq: 0, type: 'user/message', surfaceOp: 'append', time: now, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Retained upstream history about Atlas.' }] } }]
   const persistence = { identity: Symbol('initialization'), async list() { return [{ id: 'upstream', header: { id: 'upstream', createdAt: now, title: 'Upstream' }, revision: 'one', eventCount: 1 }] }, async open() { return { async read(offset) { return { events: offset ? [] : events } }, async close() {} } } }
   const { service, root, db } = await setup(t, { historyRead: true }, { sessionPersistence: persistence })
-  service.registerAssistantSession('assistant-main')
+  db.prepare("INSERT INTO main_session_binding VALUES(1,'assistant-main',1,'ready','2026-11-16T00:00:00Z')").run()
   service.updateRuntimeSettings({ historyRetentionDays: 45, memoryExtractionEnabled: false })
   const preferences = service.runtimeSettingsView().settings
   const flags = service.database.featureFlags()
@@ -209,12 +209,14 @@ test('Host disposal waits for initialization to stop without clearing accepted d
 
 test('initialization preserves the canonical assistant when several past assistant bindings exist', async t => {
   const { service, db } = await setup(t)
-  service.registerAssistantSession('current-assistant')
-  service.registerAssistantSession('past-assistant')
+  db.prepare("INSERT INTO main_session_binding VALUES(1,'current-assistant',1,'ready','2026-11-16T00:00:00Z')").run()
+  service.ledger.upsertSession({ system: 'dsh', externalId: 'past-assistant', sourceKind: 'personal_assistant' })
   db.prepare("UPDATE session_refs SET first_seen_at='2026-10-01T00:00:00Z',last_seen_at='2026-10-01T00:00:00Z' WHERE external_id='past-assistant'").run()
   assert.equal(await service.assistantSessionTarget(), 'current-assistant')
   service.initializeMemory({ confirmed: true }); await service.memoryInitializationOperation
   assert.equal(await service.assistantSessionTarget(), 'current-assistant')
+  assert.equal(service.isAssistantSession('past-assistant'), false)
+  assert.equal(db.prepare("SELECT count(*) AS n FROM session_refs WHERE source_kind='personal_assistant'").get().n, 0)
 })
 
 test('an interrupted initialization remains visible after restart and does not resume deletion', async t => {

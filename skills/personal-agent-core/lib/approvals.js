@@ -32,7 +32,17 @@ export class ApprovalService {
       return { approvalId: existing.approval_id, state: existing.approval_state, scope: JSON.parse(existing.scope_json), requestHandle: handle, inserted: false }
     }
     const approvalId = newId('approval')
-    const scope = { threadId: params.threadId ?? null, turnId: params.turnId ?? null, itemId: params.itemId ?? null, cwd: params.cwd ?? null, permissions: params.permissions ?? null, command: params.command ?? null }
+    const scope = {
+      ...(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval'].includes(method) ? { request: params } : {}),
+      threadId: params.threadId ?? null,
+      turnId: params.turnId ?? null,
+      itemId: params.itemId ?? null,
+      cwd: params.cwd ?? null,
+      grantRoot: params.grantRoot ?? null,
+      permissions: params.permissions ?? null,
+      command: params.command ?? null,
+      availableDecisions: Array.isArray(params.availableDecisions) ? params.availableDecisions : null,
+    }
     this.db.prepare(`INSERT INTO approvals(approval_id,execution_id,adapter_instance_id,connection_epoch,external_request_id,kind,scope_json,risk_summary,approval_state,requested_at,expires_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(approvalId, executionId, handle.adapterInstanceId, handle.connectionEpoch, externalRequestId, method, json(scope), this.riskSummary(method, params), 'pending', nowIso(this.clock), expiresAt)
     return { approvalId, state: 'pending', scope, requestHandle: handle, inserted: true }

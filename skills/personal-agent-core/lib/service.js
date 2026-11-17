@@ -86,7 +86,8 @@ export class PersonalAgentService {
     this.inFlightOperations = new Set()
     this.publicOperations = new Set()
     this.threadEpochs = new Map()
-    this.assistantSessionIds = new Set()
+    this.mainSession = null
+    this.wechat = null
     this.lastImport = null
     this.lastBackup = null
     this.recovery = null
@@ -110,6 +111,7 @@ export class PersonalAgentService {
     this.database.open()
     this.backgroundJobs = new BackgroundJobs(this.database.db)
     this.analysisRuns = new AnalysisRuns(this.database.db, this.context, { signal: this.historyLifetime.signal })
+    this.database.db.prepare("UPDATE session_refs SET source_kind='interaction' WHERE system='dsh' AND source_kind='personal_assistant'").run()
     this.ledger = new Ledger(this.database)
     this.ledger.history.service = this
     this.flags = new FeatureFlags(this.database)
@@ -170,7 +172,13 @@ export class PersonalAgentService {
     this.memoryInitializationOperation = Promise.resolve().then(() => this.resetMemory()).catch(error => {
       this.backgroundJobs.save({ ...this.backgroundJobs.state('memory-initialization'), state: 'failed', running: false, finishedAt: nowIso(), lastError: String(error?.message ?? error) })
       this.logger?.warn?.('Personal-agent memory initialization failed', error)
-    }).finally(() => { this.memoryInitializationOperation = null })
+    }).finally(async () => {
+      this.memoryInitializationOperation = null
+      if (this.wechat && !this.disposed) {
+        this.wechat.maintenance = false
+        await this.wechat.sync().catch(error => this.wechat.report(error))
+      }
+    })
     return this.memoryInitializationView()
   }
 
@@ -180,6 +188,13 @@ export class PersonalAgentService {
     let reconnectCodex = false
     this.historyLifetime.abort()
     try {
+      if (this.wechat) {
+        this.wechat.maintenance = true
+        await this.wechat.management.catch(() => {})
+        await this.wechat.syncWork.catch(() => {})
+        await this.wechat.cancelLogin()
+        await this.wechat.stop()
+      }
       const pending = () => [...this.publicOperations, ...this.inFlightOperations, ...this.codexHistoryScans,
         ...this.backgroundJobs.running.values(), this.importing, this.memory.running, this.codexToggleOperation, this.inboxRetryOperation].filter(Boolean)
       while (pending().length) await Promise.allSettled(pending())
@@ -188,14 +203,14 @@ export class PersonalAgentService {
       reconnectCodex = this.adapter.initialized
       await this.adapter.close()
       if (this.disposed) throw new Error('Host 已停止，记忆初始化已取消。')
-      const sessions = this.database.db.prepare("SELECT external_id,first_seen_at,last_seen_at FROM session_refs WHERE system='dsh' AND source_kind='personal_assistant'").all()
+      const mainSessionId = await this.assistantSessionTarget()
       const jobs = this.backgroundJobs.list().filter(job => job.name !== 'memory-initialization')
       phase('clearing')
       this.database.clearManagedBackups()
       const status = this.backgroundJobs.state('memory-initialization')
       this.database.transaction(() => {
         const removed = this.database.clearMemoryData()
-        for (const session of sessions) this.ledger.upsertSession({ system: 'dsh', externalId: session.external_id, sourceKind: 'personal_assistant', durability: 'durable', firstSeenAt: session.first_seen_at, lastSeenAt: session.last_seen_at })
+        if (mainSessionId) this.ledger.upsertSession({ system: 'dsh', externalId: mainSessionId, sourceKind: 'interaction', durability: 'durable' })
         for (const job of jobs) this.backgroundJobs.configure(job.name, !!job.enabled, job.intervalMs)
         this.backgroundJobs.save({ ...status, cleared: true, removed })
       })
@@ -262,6 +277,19 @@ export class PersonalAgentService {
       jobs: this.backgroundJobs?.list().filter(job => job.name !== 'memory-initialization') ?? [],
       progress: { history: this.lastImport, memory: this.memory.status(), inbox: this.inboxRetryStatus() },
     }
+  }
+
+  /** Return the current locally authorized WeChat channel state without secrets. */
+  wechatView() {
+    if (!this.wechat) throw Object.assign(new Error('微信通道正在初始化。'), { code: 'WECHAT_NOT_READY', statusCode: 503 })
+    return this.wechat.view()
+  }
+
+  /** Run one local-user channel operation; no agent tool receives this authority. */
+  manageWechat(input) {
+    this.assertMemoryAvailable()
+    if (!this.wechat) throw Object.assign(new Error('微信通道正在初始化。'), { code: 'WECHAT_NOT_READY', statusCode: 503 })
+    return this.wechat.manage(input)
   }
 
   /** Validate and save runtime-editable preferences without bypassing Codex side effects.
@@ -592,6 +620,7 @@ export class PersonalAgentService {
           WHERE execution_id=? AND kind='projection_failed' AND state='open' AND json_extract(detail_json,'$.method')=?`).run(nowIso(), execution.execution_id, request.method)
         complete()
       })
+      this.wechat?.kick()
     } catch (error) {
       if (request.inboxId) this.ledger.failInbox(request.inboxId, error.message)
       // Keep the inbox retryable. Sending a terminal error here would make a later projection retry duplicate the JSON-RPC response.
@@ -784,7 +813,7 @@ export class PersonalAgentService {
       const session = this.ledger.upsertSession({
         system: 'dsh',
         externalId,
-        sourceKind: 'personal_assistant',
+        sourceKind: 'interaction',
         durability: 'durable',
         nativeStatus: 'active',
       })
@@ -794,33 +823,15 @@ export class PersonalAgentService {
     })
   }
 
-  registerAssistantSession(sessionId) {
-    this.assertMemoryAvailable()
-    const normalized = cleanText(sessionId, 500)
-    if (!normalized) throw new TypeError('A native DSH session id is required')
-    this.assistantSessionIds.add(normalized)
-    return this.ledger.upsertSession({ system: 'dsh', externalId: normalized, sourceKind: 'personal_assistant', durability: 'durable' })
-  }
-
   async assistantSessionTarget() {
-    const row = this.database.db.prepare(`SELECT external_id FROM session_refs WHERE system='dsh' AND source_kind='personal_assistant'
-      ORDER BY last_seen_at DESC,first_seen_at DESC,external_id LIMIT 1`).get()
-    return cleanText(row?.external_id, 500) || null
+    return this.mainSession?.binding()?.session_id ?? this.database.db?.prepare('SELECT session_id FROM main_session_binding WHERE singleton=1').get()?.session_id ?? null
   }
 
+  /** Assistant authority belongs only to the persisted main conversation. */
   isAssistantSession(sessionId) {
     const normalized = cleanText(sessionId, 500)
-    if (!normalized) return false
-    if (this.assistantSessionIds.has(normalized)) return true
-    const db = this.database?.db
-    if (!db) return false
-    const persisted = db.prepare(`SELECT 1 WHERE
-      EXISTS(SELECT 1 FROM session_refs WHERE system='dsh' AND external_id=? AND source_kind='personal_assistant')
-      OR EXISTS(SELECT 1 FROM tasks WHERE parent_task_id IS NULL AND source_key=?)`)
-      .get(normalized, `assistant-session:${normalized}`)
-    if (!persisted) return false
-    this.assistantSessionIds.add(normalized)
-    return true
+    if (!normalized || !this.database.db || this.database.closed) return false
+    return this.database.db.prepare('SELECT session_id FROM main_session_binding WHERE singleton=1').get()?.session_id === normalized
   }
 
   health() {
@@ -1372,7 +1383,7 @@ export class PersonalAgentService {
     const externalId = cleanText(agent?.session?.id, 500)
     if (!externalId) return null
     const isAssistant = this.isAssistantSession(externalId)
-    const session = this.ledger.upsertSession({ system: 'dsh', externalId, sourceKind: isAssistant ? 'personal_assistant' : 'interaction', cwd: agent?.session?.header?.cwd ?? null, durability: 'durable', nativeStatus: 'active' })
+    const session = this.ledger.upsertSession({ system: 'dsh', externalId, sourceKind: 'interaction', cwd: agent?.session?.header?.cwd ?? null, durability: 'durable', nativeStatus: 'active' })
     if (taskId) this.ledger.attachTaskSession(taskId, session.sessionRefId, { relation: isAssistant ? 'primary' : 'interaction', confidence: 1 })
     return session
   }
@@ -1736,6 +1747,7 @@ export class PersonalAgentService {
     return { message, text }
   }
 
+  /** Record the current user message as evidence without changing assistant authority. */
   recordMemoryOperation(sourceKind, text, details = {}, { agent = null, quotedText = null } = {}) {
     const id = newId('memory-operation')
     let externalId = id
@@ -1748,7 +1760,7 @@ export class PersonalAgentService {
       externalId = current.message.id ?? id
       sourceUri = `dsh://session/${sessionId}`
       sourceLocator = `user-message:${externalId}`
-      if (sessionId) sessionRefId = this.ledger.upsertSession({ system: 'dsh', externalId: sessionId, sourceKind: 'personal_assistant', durability: 'durable' }).sessionRefId
+      if (sessionId) sessionRefId = this.ledger.upsertSession({ system: 'dsh', externalId: sessionId, sourceKind: 'interaction', durability: 'durable' }).sessionRefId
       text = current.text
       details = { ...details, messageId: externalId, quotedText }
     }
@@ -2077,10 +2089,11 @@ export class PersonalAgentService {
     this.disposed = true
     this.cancelHistory()
     this.workerLifetime.abort()
+    await this.wechat?.close()
+    await this.wechat?.interactions.dispose()
     await this.memoryInitializationOperation
     for (const timer of this.workerTimers.values()) clearTimeout(timer)
     this.workerTimers.clear()
-    this.assistantSessionIds.clear()
     await this.importing?.catch(() => {})
     await this.memory?.running?.catch(() => {})
     while (this.publicOperations.size) await Promise.allSettled([...this.publicOperations])

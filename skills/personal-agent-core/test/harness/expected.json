@@ -30,5 +30,6 @@
   "batchFailureIsolationVerified": true,
   "staleTaskErrorIsolationVerified": true,
   "publishedTaskIdentityRepairVerified": true,
-  "deletedTaskRetryResetVerified": true
+  "deletedTaskRetryResetVerified": true,
+  "assistantCommandAbsent": true
 }

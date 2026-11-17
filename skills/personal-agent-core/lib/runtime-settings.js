@@ -1,7 +1,9 @@
+import { WECHAT_DEFAULTS, validateWechatSetting } from './wechat-config.js'
 import { validateWorkerRules } from './worker-policy.js'
 /** Runtime-editable preferences for background work and history import. */
 
 export const RUNTIME_SETTING_KEYS = Object.freeze([
+  ...Object.keys(WECHAT_DEFAULTS),
   'defaultLanguage',
   'hotHistoryDays',
   'candidateReviewDays',
@@ -78,6 +80,7 @@ const presetPattern = /^[a-z][a-z0-9-]{0,31}$/
  */
 export function defaultRuntimeSettings(config) {
   return Object.freeze({
+    ...Object.fromEntries(Object.entries(WECHAT_DEFAULTS).map(([key, fallback]) => [key, config[key] ?? fallback])),
     defaultLanguage: config.defaultLanguage,
     hotHistoryDays: config.hotHistoryDays,
     candidateReviewDays: config.candidateReviewDays,
@@ -141,6 +144,7 @@ export function resolveRuntimeSettings(input, base) {
   const value = { ...base }
   for (const key of RUNTIME_SETTING_KEYS) {
     if (Object.hasOwn(input, key)) value[key] = input[key]
+    if (validateWechatSetting(key, value[key])) continue
     if (key === 'defaultLanguage') {
       if (typeof value[key] !== 'string' || !value[key].trim() || value[key].length > 100) throw new TypeError('defaultLanguage must be a language name or locale')
       continue

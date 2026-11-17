@@ -1,0 +1,24 @@
+{
+  "singleMainSession": true,
+  "nativeQuestion": true,
+  "nativeApproval": true,
+  "ownerRequired": true,
+  "automaticOwnerVerification": true,
+  "idleContextReconciliation": true,
+  "singleContextMessage": true,
+  "nativeInputCount": 2,
+  "wechatInputCount": 1,
+  "finalReplyCount": 2,
+  "duplicateDelivery": false,
+  "contextRecorded": true,
+  "replyText": [
+    "Recorded fixture result: verification output observed.",
+    "Recorded fixture result: verification output observed."
+  ],
+  "nativeApprovalScope": true,
+  "nativePersistenceFailureClosed": true,
+  "ordinaryMemorySourcePreserved": true,
+  "ordinaryAssistantAuthority": false,
+  "roleCommandAbsent": true,
+  "sessionSelectionAbsent": true
+}

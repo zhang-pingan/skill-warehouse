@@ -1,3 +1,4 @@
+import { WECHAT_DEFAULTS } from './wechat-config.js'
 import { defaultRuntimeSettings, resolveRuntimeSettings } from './runtime-settings.js'
 import { DEFAULT_WORKER_RULES, validateWorkerRules } from './worker-policy.js'
 import os from 'node:os'
@@ -40,6 +41,8 @@ export function resolveConfig(input = {}, env = process.env) {
   const routeResumeThreshold = input.routeResumeThreshold ?? 0.86
   if (!Number.isFinite(routeResumeThreshold) || routeResumeThreshold < 0 || routeResumeThreshold > 1) throw new TypeError('routeResumeThreshold must be from 0 to 1')
   const resolved = {
+    ...WECHAT_DEFAULTS,
+    wechatLockDir: path.resolve(input.wechatLockDir ?? path.join(os.homedir(), '.dsh', 'locks', 'personal-agent-wechat')),
     defaultLanguage: input.defaultLanguage ?? 'zh-CN',
     hotHistoryDays: positiveInteger(input, 'hotHistoryDays', 90),
     candidateReviewDays: positiveInteger(input, 'candidateReviewDays', 90),
@@ -98,6 +101,7 @@ export function resolveConfig(input = {}, env = process.env) {
     operatorToken,
     allowedWorkspaceRoots: Object.freeze(allowedWorkspaceRoots),
   }
+  if (typeof input.wechatLockDir !== 'undefined' && (typeof input.wechatLockDir !== 'string' || !path.isAbsolute(input.wechatLockDir))) throw new TypeError('wechatLockDir must be an absolute directory')
   const settings = resolveRuntimeSettings(Object.fromEntries(Object.keys(defaultRuntimeSettings(resolved)).filter(key => Object.hasOwn(input, key)).map(key => [key, input[key]])), defaultRuntimeSettings(resolved))
   return Object.freeze({ ...resolved, ...settings })
 }

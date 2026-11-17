@@ -18,6 +18,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { apply, assistantContextMessage, ASSISTANT_CONTEXT, TOOL } from '../index.js'
+import { MainSession } from '../lib/main-session.js'
 import { PersonalAgentService } from '../lib/service.js'
 
 function validateSchema(definition) {
@@ -61,83 +62,42 @@ test('DSH tool does not expose Codex privilege or operator controls', () => {
   assert.equal(TOOL.parameters.properties.action.enum.includes('decide_approval'), false)
 })
 
-test('assistant bootstrap command injects context and flushes persistence', async () => {
-  let cleanup
-  let command
-  let tool
-  let flushes = 0
-  let workspaceEnsures = 0
-  const injected = []
-  const modelSelections = []
-  const permissionSelections = []
-  const presetSelections = []
-  let currentPreset = 'cordis'
-  let presetLocked = false
-  const originalInitialize = PersonalAgentService.prototype.initialize
-  const originalDispose = PersonalAgentService.prototype.dispose
-  const originalRegisterAssistantSession = PersonalAgentService.prototype.registerAssistantSession
-  const originalCreateAssistantTask = PersonalAgentService.prototype.createAssistantTask
-  const originalOperate = PersonalAgentService.prototype.operate
-  let registeredSession = null
-  let sessionEvent = null
-  let eventListenerDisposals = 0
-  const createdTasks = []
-  PersonalAgentService.prototype.initialize = async () => ({ ok: true })
-  PersonalAgentService.prototype.dispose = async () => {}
-  PersonalAgentService.prototype.registerAssistantSession = function (sessionId) { registeredSession = sessionId; this.assistantSessionIds.add(sessionId) }
-  PersonalAgentService.prototype.createAssistantTask = args => { createdTasks.push(args); return args }
+test('only the fixed main session gets assistant tool authority and no role command is registered', async () => {
+  let cleanup, tool, registrations = 0, workspaceEnsures = 0, service
+  const originals = Object.fromEntries(['initialize','dispose','operate'].map(key => [key, PersonalAgentService.prototype[key]]))
+  PersonalAgentService.prototype.initialize = async function () {
+    service = this
+    this.database.config = { ...this.database.config, databasePath: ':memory:' }
+    this.database.open()
+    this.database.db.prepare("INSERT INTO main_session_binding VALUES(1,'main',1,'ready','2026-11-17T00:00:00Z')").run()
+    return { ok: true }
+  }
+  PersonalAgentService.prototype.dispose = async function () { await this.wechat?.close(); this.database.close() }
   PersonalAgentService.prototype.operate = async (_args, authority) => authority
   const ctx = {
+    sessionProjections: { async register() { return { stateOf: () => ({contextLoaded:true}), async dispose() {} } } },
+    on() { return () => {} },
     effect(callback) { cleanup = collectEffect(callback) },
     appReady: { onReady(listener) { listener(); return () => {} } },
-    on(name, listener) { sessionEvent = { name, listener }; return () => { eventListenerDisposals += 1 } },
-    webServer: { register: () => async () => {} },
-    connection: {},
+    webServer: { register: () => async () => {} }, connection: {},
     tools: { register(definition) { tool = definition; return async () => {} } },
-    commands: { register(definition) { command = definition; return async () => {} } },
+    commands: { register() { registrations += 1; return () => {} } },
     workingDirectory: { async ensure() { workspaceEnsures += 1; return '/workspace' } },
-    sessionPersistence: { async flush() { flushes += 1 } },
-    permissionPresets: { async set(session, preset) { permissionSelections.push({ session, preset }) } },
-    agentPresets: { presetForSession: () => currentPreset, async select(agent, preset) { if (presetLocked) throw new Error('preset locked'); presetSelections.push({ session: agent.session, preset }); currentPreset = preset } },
-    timer: { interval: () => () => {} },
-    logger: { warn() {}, error() {} },
+    timer: { interval: () => () => {} }, logger: { warn() {}, error() {} },
   }
   try {
     apply(ctx, { historyRead: false })
-    assert.equal(command.name, 'personal-assistant')
-    const session = { id: 'session-private-1' }
-    const result = await command.handler({ agent: { session, model: { async select(selection) { modelSelections.push(selection) } }, inject(message) { injected.push(message) } } })
-    assert.equal(result.kind, 'success')
-    assert.equal(registeredSession, 'session-private-1')
-    assert.deepEqual(modelSelections, [])
-    assert.deepEqual(permissionSelections, [])
-    assert.deepEqual(presetSelections, [{ session, preset: 'standard' }])
-    assert.equal(injected.length, 1)
-    assert.equal(injected[0].content[0].text, ASSISTANT_CONTEXT)
-    assert.equal(flushes, 1)
-    assert.equal(sessionEvent, null)
-    assert.deepEqual(createdTasks, [])
-    const authority = await tool.execute({ action: 'health' }, { agent: { session } })
+    const authority = await tool.execute({ action: 'health' }, { agent: { session: { id: 'main' } } })
     assert.equal(authority.callerWorkspaceRoot, null)
     assert.equal(workspaceEnsures, 0)
-    const ordinary = await tool.execute({ action: 'health' }, { agent: { session: { id: 'ordinary-session' } } })
+    const ordinary = await tool.execute({ action: 'health' }, { agent: { session: { id: 'ordinary' } } })
     assert.equal(ordinary.callerWorkspaceRoot, '/workspace')
     assert.equal(workspaceEnsures, 1)
-    await command.handler({ agent: { session, model: { async select(selection) { modelSelections.push(selection) } }, inject(message) { injected.push(message) } } })
-    assert.equal(presetSelections.length, 1, 'an existing standard session needs no preset selection')
-    currentPreset = 'cordis'
-    presetLocked = true
-    await assert.rejects(command.handler({ agent: { session, model: { select() { assert.fail('stop after a locked preset') } }, inject() { assert.fail('do not register a partial role') } } }), /preset locked/)
-    assert.equal(injected.length, 2)
-    assert.equal(flushes, 2)
+    assert.equal(service.isAssistantSession('ordinary'), false)
+    assert.equal(registrations, 0)
   } finally {
     await cleanup?.()
-    assert.equal(eventListenerDisposals, 0)
-    PersonalAgentService.prototype.initialize = originalInitialize
-    PersonalAgentService.prototype.dispose = originalDispose
-    PersonalAgentService.prototype.registerAssistantSession = originalRegisterAssistantSession
-    PersonalAgentService.prototype.createAssistantTask = originalCreateAssistantTask
-    PersonalAgentService.prototype.operate = originalOperate
+    Object.assign(PersonalAgentService.prototype, originals)
   }
 })
 
@@ -149,10 +109,12 @@ test('operator HTTP route requires an independent bearer token', async () => {
   const originalInitialize = PersonalAgentService.prototype.initialize
   const originalDispose = PersonalAgentService.prototype.dispose
   const originalOperate = PersonalAgentService.prototype.operate
-  PersonalAgentService.prototype.initialize = async () => ({ ok: true })
-  PersonalAgentService.prototype.dispose = async () => {}
+  PersonalAgentService.prototype.initialize = async function () { this.database.config = {...this.database.config,databasePath:':memory:'}; this.database.open(); return {ok:true} }
+  PersonalAgentService.prototype.dispose = async function () { await this.wechat?.close(); this.database.close() }
   PersonalAgentService.prototype.operate = async (_args, authority) => ({ actor: authority.actor })
   const ctx = {
+    sessionProjections: { async register() { return { stateOf: () => ({contextLoaded:true}), async dispose() {} } } },
+    on() { return () => {} },
     effect(callback) { cleanup = collectEffect(callback) },
     appReady: { onReady(listener) { listener(); return () => {} } },
     webServer: { register(definition) { assert.equal(routes.has(definition.path), false, `duplicate route ${definition.path}`); routes.set(definition.path, definition.handler); return async () => {} } },
@@ -178,7 +140,7 @@ test('operator HTTP route requires an independent bearer token', async () => {
   }
   try {
     apply(ctx, { dataDir: path.join(root, 'data'), codexHome: path.join(root, 'codex'), operatorToken: '0123456789abcdef0123456789abcdef' })
-    assert.deepEqual([...routes.keys()].sort(), ['/api/personal-agent/assets/starmap_bg.mp4', '/api/personal-agent/dashboard', '/api/personal-agent/memory', '/api/personal-agent/memory/extraction', '/api/personal-agent/memory/initialization', '/api/personal-agent/memory/item', '/api/personal-agent/operate', '/api/personal-agent/session', '/api/personal-agent/settings', '/api/personal-agent/settings/codex', '/api/personal-agent/task'])
+    assert.deepEqual([...routes.keys()].sort(), ['/api/personal-agent/assets/starmap_bg.mp4', '/api/personal-agent/dashboard', '/api/personal-agent/memory', '/api/personal-agent/memory/extraction', '/api/personal-agent/memory/initialization', '/api/personal-agent/memory/item', '/api/personal-agent/operate', '/api/personal-agent/session', '/api/personal-agent/settings', '/api/personal-agent/settings/codex', '/api/personal-agent/task', '/api/personal-agent/wechat'])
     const denied = await invoke(null)
     assert.equal(denied.statusCode, 403)
     assert.equal(JSON.parse(denied.body).code, 'OPERATOR_AUTH_REQUIRED')
@@ -236,15 +198,21 @@ test('dashboard HTTP routes create and read top-level assistant tasks', async ()
     assistantSessionTarget: PersonalAgentService.prototype.assistantSessionTarget,
     isAssistantSession: PersonalAgentService.prototype.isAssistantSession,
   }
-  PersonalAgentService.prototype.initialize = async () => ({ ok: true })
-  PersonalAgentService.prototype.dispose = async () => {}
+  PersonalAgentService.prototype.initialize = async function () { this.database.config = {...this.database.config,databasePath:':memory:'}; this.database.open(); return {ok:true} }
+  PersonalAgentService.prototype.dispose = async function () { await this.wechat?.close(); this.database.close() }
   PersonalAgentService.prototype.dashboard = () => ({ tasks: { active: [], completed: [] }, codex: { connected: false } })
   PersonalAgentService.prototype.createAssistantTask = args => ({ id: 'task-created', title: args.objective, state: 'active', sessionId: args.sessionId })
   PersonalAgentService.prototype.dashboardTaskDetail = id => ({ task: { id, title: 'Task detail', state: 'active' } })
   PersonalAgentService.prototype.assistantSessionTarget = async () => 'session-native'
   PersonalAgentService.prototype.isAssistantSession = id => id === 'session-native'
+  const originalBinding = MainSession.prototype.binding
+  const originalEnsure = MainSession.prototype.ensure
+  MainSession.prototype.binding = () => ({session_id:'session-native',state:'ready'})
+  MainSession.prototype.ensure = async () => { if(targetPreset !== 'standard') throw new Error('standard required'); return {sessionId:'session-native',agentPreset:'standard'} }
   let targetPreset = 'standard'
   const ctx = {
+    sessionProjections: { async register() { return { stateOf: () => ({contextLoaded:true}), async dispose() {} } } },
+    on() { return () => {} },
     effect(callback) { cleanup = collectEffect(callback) },
     appReady: { onReady(listener) { listener(); return () => {} } },
     webServer: { register(definition) { routes.set(definition.path, definition.handler); return async () => {} } },
@@ -284,11 +252,13 @@ test('dashboard HTTP routes create and read top-level assistant tasks', async ()
     const target = await invoke('/api/personal-agent/session')
     assert.deepEqual(target.body, { sessionId: 'session-native', agentPreset: 'standard' })
     targetPreset = 'cordis'
-    assert.deepEqual((await invoke('/api/personal-agent/session')).body, { sessionId: 'session-native', agentPreset: 'cordis' })
+    assert.match((await invoke('/api/personal-agent/session')).body.error, /standard required/)
     const assistant = await invoke('/api/personal-agent/session', { url: '/api/personal-agent/session?id=session-native' })
     assert.deepEqual(assistant.body, { assistant: true })
   } finally {
     await cleanup?.()
+    MainSession.prototype.binding = originalBinding
+    MainSession.prototype.ensure = originalEnsure
     for (const [name, implementation] of Object.entries(originals)) PersonalAgentService.prototype[name] = implementation
   }
 })
@@ -308,6 +278,8 @@ test('settings updates persist preferences and replace background timers after s
     return { imported: true }
   })
   const ctx = {
+    sessionProjections: { async register() { return { stateOf: () => ({contextLoaded:true}), async dispose() {} } } },
+    on() { return () => {} },
     effect(callback) { cleanup = collectEffect(callback) },
     appReady: { onReady(listener) { announceReady = listener; return () => {} } },
     on: () => () => {},
@@ -396,9 +368,11 @@ test('plugin disposal before initialization never starts background timers', asy
   const originalDispose = PersonalAgentService.prototype.dispose
   let cleanup
   let timersStarted = 0
-  PersonalAgentService.prototype.initialize = () => ready
-  PersonalAgentService.prototype.dispose = async () => {}
+  PersonalAgentService.prototype.initialize = async function () { this.database.config = {...this.database.config,databasePath:':memory:'}; this.database.open(); return ready }
+  PersonalAgentService.prototype.dispose = async function () { await this.wechat?.close(); this.database.close() }
   const ctx = {
+    sessionProjections: { async register() { return { stateOf: () => ({contextLoaded:true}), async dispose() {} } } },
+    on() { return () => {} },
     effect(callback) { cleanup = collectEffect(callback) },
     appReady: { onReady(listener) { listener(); return () => {} } },
     webServer: { register: () => async () => {} },
@@ -438,6 +412,8 @@ test('automatic history sync waits for launcher readiness and shares the periodi
     else periodic.resolve()
   })
   const ctx = {
+    sessionProjections: { async register() { return { stateOf: () => ({contextLoaded:true}), async dispose() {} } } },
+    on() { return () => {} },
     effect(callback) { cleanup = collectEffect(callback) },
     appReady: { onReady(listener) { announceReady = listener; return () => { startupListenerRemoved = true } } },
     webServer: { register: () => () => {} },
@@ -478,6 +454,8 @@ test('disposal before launcher readiness cancels the pending initial history syn
   t.mock.method(PersonalAgentService.prototype, 'dispose', async () => {})
   t.mock.method(PersonalAgentService.prototype, 'importHistory', async () => { imports += 1 })
   const ctx = {
+    sessionProjections: { async register() { return { stateOf: () => ({contextLoaded:true}), async dispose() {} } } },
+    on() { return () => {} },
     effect(callback) { cleanup = collectEffect(callback) },
     appReady: { onReady(listener) { announceReady = listener; return () => { removed = true } } },
     webServer: { register: () => () => {} }, connection: {},
@@ -492,4 +470,38 @@ test('disposal before launcher readiness cancels the pending initial history syn
   assert.equal(removed, true)
   assert.equal(imports, 0)
   assert.equal(timers, 0)
+})
+
+test('failed service initialization does not leave a registered session projection', async t => {
+  let cleanup, tool, registrations=0, disposals=0
+  t.mock.method(PersonalAgentService.prototype,'initialize',async()=>{throw new Error('initialization failed')})
+  t.mock.method(PersonalAgentService.prototype,'dispose',async()=>{})
+  const ctx={
+    effect(callback){cleanup=collectEffect(callback)},on(){return()=>{}},
+    sessionProjections:{async register(){registrations++;return{dispose:async()=>{disposals++}}}},
+    appReady:{onReady(){return()=>{}}},webServer:{register:()=>()=>{}},connection:{},
+    tools:{register(definition){tool=definition;return()=>{}}},commands:{register:()=>()=>{}},
+    timer:{interval:()=>()=>{}},logger:{warn(){},error(){}},
+  }
+  apply(ctx,{historyRead:false})
+  await assert.rejects(tool.execute({action:'health'}),/initialization failed/)
+  await cleanup()
+  assert.equal(registrations,disposals)
+})
+
+test('disposal waits for delayed projection registration and releases the acquired handle', async t => {
+  let cleanup, disposed=false, projectionDisposed=false
+  const entered=Promise.withResolvers(), release=Promise.withResolvers()
+  t.mock.method(PersonalAgentService.prototype,'initialize',async function(){this.database.config={...this.database.config,databasePath:':memory:'};this.database.open()})
+  t.mock.method(PersonalAgentService.prototype,'dispose',async function(){await this.wechat?.close();this.database.close();disposed=true})
+  const ctx={
+    effect(callback){cleanup=collectEffect(callback)},on(){return()=>{}},
+    sessionProjections:{async register(){entered.resolve();await release.promise;return{stateOf:()=>({contextLoaded:true}),async dispose(){assert.equal(disposed,true);projectionDisposed=true}}}},
+    appReady:{onReady(){return()=>{}}},webServer:{register:()=>()=>{}},connection:{},
+    tools:{register:()=>()=>{}},commands:{register:()=>()=>{}},timer:{interval:()=>()=>{}},logger:{warn(){},error(){}},
+  }
+  apply(ctx,{historyRead:false});await entered.promise
+  const closing=cleanup();assert.equal(disposed,false)
+  release.resolve();await closing
+  assert.equal(projectionDisposed,true)
 })

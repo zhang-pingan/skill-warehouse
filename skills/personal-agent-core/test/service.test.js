@@ -969,8 +969,7 @@ test('definite mutating dispatch failure releases its workspace lease', async ()
 test('a persisted assistant target remains recognized before its first task', async () => {
   const f = await serviceFixture()
   try {
-    f.service.registerAssistantSession('blank-assistant')
-    f.service.assistantSessionIds.clear()
+    f.service.database.db.prepare("INSERT INTO main_session_binding VALUES(1,'blank-assistant',1,'ready','2026-11-17T00:00:00Z')").run()
     assert.equal(f.service.isAssistantSession('blank-assistant'), true)
     assert.equal(f.service.database.db.prepare("SELECT COUNT(*) AS count FROM tasks WHERE source_key='assistant-session:blank-assistant'").get().count, 0)
     const created = f.service.createAssistantTask({ sessionId: 'blank-assistant', objective: 'First real request' })
@@ -986,11 +985,10 @@ test('dashboard only exposes top-level native assistant tasks', async () => {
     const repeated = f.service.createAssistantTask({ sessionId: 'assistant-session-1', objective: 'A duplicate title is ignored' })
     assert.notEqual(repeated.id, created.id)
     assert.equal(repeated.title, 'A duplicate title is ignored')
-    f.service.registerAssistantSession('assistant-session-1')
+    assert.equal(await f.service.assistantSessionTarget(), null)
+    f.service.database.db.prepare("INSERT INTO main_session_binding VALUES(1,'assistant-session-1',1,'ready','2026-11-16T00:00:00Z')").run()
     assert.equal(await f.service.assistantSessionTarget(), 'assistant-session-1')
-    f.service.assistantSessionIds.clear()
     assert.equal(f.service.isAssistantSession('assistant-session-1'), true)
-    assert.equal(f.service.assistantSessionIds.has('assistant-session-1'), true)
     assert.equal(f.service.isAssistantSession('unknown-session'), false)
 
     const completed = f.service.ledger.createTask({ objective: 'Review the rollout', sourceKey: 'native:rollout', state: 'completed' })
@@ -1143,4 +1141,55 @@ test('shutdown joins an accepted Codex server request before closing its ledger'
     assert.doesNotThrow(() => f.service.adapter.emit('serverRequest', { method: 'unsupported/request' }))
     assert.equal(f.service.inFlightOperations.size, 0)
   } finally { release.resolve(); await f.close() }
+})
+
+
+test('memory operations retain exact user sources without granting assistant identity', async () => {
+  const f = await serviceFixture({ memoryExtractionEnabled: false })
+  try {
+    const db = f.service.database.db
+    db.prepare("INSERT INTO main_session_binding VALUES(1,'main',1,'ready','2026-11-17T00:00:00Z')").run()
+    f.service.ledger.upsertSession({system:'dsh',externalId:'imported',sourceKind:'session'})
+    for (const sessionId of ['fresh','imported','main']) {
+      let current = {id: `${sessionId}-remember`,role:'user',source:{kind:'user'},content:[{type:'text',text:`记住${sessionId}喜欢简洁的回答`}]}
+      const agent = {session:{id:sessionId,deriveMessages:()=>[current]}}
+      const record = await f.service.operate({action:'remember',content:`${sessionId}喜欢简洁的回答`}, {actor:'assistant',agent})
+      current = {...current,id:`${sessionId}-confirm`,content:[{type:'text',text:'确认这条记忆'}]}
+      await f.service.operate({action:'confirm_memory',memoryId:record.id}, {actor:'assistant',agent})
+      current = {...current,id:`${sessionId}-correct`,content:[{type:'text',text:`更正为${sessionId}喜欢具体的回答`}]}
+      await f.service.operate({action:'correct_memory',memoryId:record.id,content:`${sessionId}喜欢具体的回答`}, {actor:'assistant',agent})
+      current = {...current,id:`${sessionId}-retract`,content:[{type:'text',text:'撤回这条记忆'}]}
+      await f.service.operate({action:'retract_memory',memoryId:record.id}, {actor:'assistant',agent})
+      const sources = db.prepare(`SELECT r.source_locator,e.source_uri,e.author_role FROM evidence e
+        JOIN source_records r USING(source_record_id) JOIN session_refs s USING(session_ref_id)
+        WHERE s.external_id=? ORDER BY r.source_locator`).all(sessionId)
+      assert.equal(sources.length,4)
+      assert.deepEqual(sources.map(row=>row.source_locator),['confirm','correct','remember','retract'].map(action=>`user-message:${sessionId}-${action}`))
+      assert.ok(sources.every(row=>row.source_uri===`dsh://session/${sessionId}`&&row.author_role==='user'))
+      assert.equal(f.service.isAssistantSession(sessionId),sessionId==='main')
+      assert.equal(await f.service.assistantSessionTarget(),'main')
+      assert.equal(db.prepare('SELECT source_kind FROM session_refs WHERE external_id=?').get(sessionId).source_kind,sessionId==='imported'?'session':'interaction')
+    }
+    assert.equal(db.prepare("SELECT count(*) AS n FROM session_refs WHERE source_kind='personal_assistant'").get().n,0)
+  } finally { await f.close() }
+})
+
+test('restart clears obsolete role labels while preserving memory sources and the sole main identity', async () => {
+  const f = await serviceFixture({memoryExtractionEnabled:false})
+  let restarted
+  try {
+    const db=f.service.database.db
+    db.prepare("INSERT INTO main_session_binding VALUES(1,'main',1,'ready','2026-11-17T00:00:00Z')").run()
+    const legacy=f.service.ledger.upsertSession({system:'dsh',externalId:'legacy',sourceKind:'personal_assistant'})
+    const evidence=f.service.ledger.ingestSource({sourceSystem:'dsh',sourceKind:'memory_statement',sourceUri:'dsh://session/legacy',sourceLocator:'user-message:old',sourceIdentity:'old',text:'我喜欢简洁的回答',authorRole:'user',sessionRefId:legacy.sessionRefId})
+    f.service.ledger.createTask({objective:'Old assistant role',sourceKey:'assistant-session:legacy'})
+    assert.equal(f.service.isAssistantSession('legacy'),false)
+    await f.service.dispose()
+    restarted=new PersonalAgentService(f.service.config)
+    await restarted.initialize()
+    assert.equal(restarted.isAssistantSession('legacy'),false)
+    assert.equal(restarted.isAssistantSession('main'),true)
+    assert.equal(restarted.database.db.prepare('SELECT source_kind FROM session_refs WHERE session_ref_id=?').get(legacy.sessionRefId).source_kind,'interaction')
+    assert.equal(restarted.database.db.prepare('SELECT session_ref_id FROM evidence WHERE evidence_id=?').get(evidence.evidenceId).session_ref_id,legacy.sessionRefId)
+  } finally { await restarted?.dispose(); await f.close() }
 })

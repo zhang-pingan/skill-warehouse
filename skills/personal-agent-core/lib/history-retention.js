@@ -151,7 +151,8 @@ export async function pruneInactiveHistory(ledger, { system, keep, unknown = new
           summary.tasks += 1
         }
       }
-      if (session.source_kind !== 'personal_assistant' && !hasReferences(db, sessionRefs, session.session_ref_id)) {
+      const isMainSession = system === 'dsh' && db.prepare('SELECT 1 FROM main_session_binding WHERE singleton=1 AND session_id=?').get(session.external_id)
+      if (!isMainSession && !hasReferences(db, sessionRefs, session.session_ref_id)) {
         db.prepare('DELETE FROM session_refs WHERE session_ref_id=?').run(session.session_ref_id)
         summary.sessions += 1
       }

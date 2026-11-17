@@ -54,8 +54,12 @@ export class LedgerDatabase {
   ensureSchema() {
     const schema = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8')
     const version = this.db.prepare('PRAGMA user_version').get().user_version
-    if (this.hasTable('evidence') && version !== 1) throw new Error('Memory schema requires explicit initialization before installing this version')
-    this.db.exec(schema)
+    if (this.hasTable('evidence') && ![1, 2].includes(version)) throw new Error('Memory schema requires explicit initialization before installing this version')
+    this.transaction(() => {
+      this.db.exec(schema)
+      this.db.exec(readFileSync(new URL('./wechat-schema.sql', import.meta.url), 'utf8'))
+      this.db.exec('PRAGMA user_version=2')
+    })
   }
 
   /** Replace a retired database with the current empty schema. */
@@ -90,7 +94,7 @@ export class LedgerDatabase {
 
   /** Empty memory and dependent operational records without changing table definitions or preferences. */
   clearMemoryData() {
-    const retained = new Set(['runtime_settings', 'feature_flags'])
+    const retained = new Set(['runtime_settings', 'feature_flags', 'main_session_binding', 'wechat_channel', 'wechat_contacts', 'wechat_inbox', 'wechat_outbox', 'wechat_interactions'])
     const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=tbl_name AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts_%'").all()
       .map(row => row.name).filter(name => !retained.has(name))
     return this.transaction(() => {
@@ -216,7 +220,7 @@ export class LedgerDatabase {
       const rows = restored.prepare('PRAGMA integrity_check').all()
       const integrityOk = rows.length === 1 && rows[0].integrity_check === 'ok'
       if (!integrityOk) throw new Error(`Backup integrity check failed: ${JSON.stringify(rows)}`)
-      if (restored.prepare('PRAGMA user_version').get().user_version !== 1) throw new Error('Backup uses an unsupported memory schema')
+      if (![1, 2].includes(restored.prepare('PRAGMA user_version').get().user_version)) throw new Error('Backup uses an unsupported memory schema')
       for (const row of restored.prepare('SELECT content_hash,byte_size,compressed FROM source_blobs WHERE content IS NULL').all()) {
         const body=gunzipSync(row.compressed,{maxOutputLength:this.config.maxHistoryRecordBytes})
         if(body.length!==row.byte_size||sha256(body)!==row.content_hash)throw new Error('Backup archive verification failed')
@@ -236,10 +240,17 @@ export class LedgerDatabase {
     try {
       copyFileSync(validatedSource.path, target)
       chmodSync(target, 0o600)
+      const restored = new DatabaseSync(target)
+      try {
+        restored.exec(readFileSync(new URL('./wechat-schema.sql', import.meta.url), 'utf8'))
+        restored.prepare('INSERT OR IGNORE INTO wechat_channel(singleton,updated_at) VALUES(1,?)').run(nowIso(this.clock))
+        restored.prepare('UPDATE wechat_channel SET restore_hold=1 WHERE singleton=1').run()
+        restored.exec('PRAGMA user_version=2; PRAGMA wal_checkpoint(TRUNCATE);')
+      } finally { restored.close() }
       const manifest = {
         databaseFile: path.basename(target),
-        bytes: validatedSource.bytes,
-        sha256: validatedSource.sha256,
+        bytes: lstatSync(target).size,
+        sha256: sha256(readRegularFile(target)),
         createdAt: nowIso(this.clock),
         restoredFrom: validatedSource.path,
       }

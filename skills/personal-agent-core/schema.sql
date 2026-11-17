@@ -1,5 +1,4 @@
 -- Session-task memory schema. Existing installations require explicit initialization.
-PRAGMA user_version=1;
 
 CREATE TABLE IF NOT EXISTS acceptance_results (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT,

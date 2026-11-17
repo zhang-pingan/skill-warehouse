@@ -1,37 +1,21 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolveConfig } from './lib/config.js'
 import { PersonalAgentService } from './lib/service.js'
+import { MainSession } from './lib/main-session.js'
+import { WechatChannel } from './lib/wechat-channel.js'
+import { registerWechatInteractions } from './lib/wechat-interactions.js'
+import { wechatProjection } from './lib/wechat-projection.js'
 
 export const Config = { '~standard': { version: 1, vendor: 'personal-agent', validate(input) {
   try { return { value: resolveConfig(input) } } catch (error) { return { issues: [{ message: error.message }] } }
 } } }
 
-export const inject = ['webServer', 'connection', 'tools', 'commands', 'timer', 'appReady', 'sessionPersistence', 'sessionController', 'llm', 'agentDefaultModel', 'workingDirectory', 'agentPresets', 'workspaceRegistry', 'agents', 'subagents']
+export const inject = ['webServer', 'connection', 'tools', 'timer', 'appReady', 'sessionPersistence', 'sessionController', 'workspaceController', 'credentials', 'sessionProjections', 'llm', 'agentDefaultModel', 'workingDirectory', 'agentPresets', 'workspaceRegistry', 'agents', 'subagents']
 const BASE = '/api/personal-agent'
 const failureText = error => String(error?.message ?? error).slice(0, 1000)
 
-export const ASSISTANT_CONTEXT = `Act as the user's top-level private assistant in this DSH session.
-Use the personal_agent tool whenever persistent tasks, prior actions, historical context, approvals, or cited evidence can improve the answer. Cite the returned source keys or evidence identifiers for historical claims.
-Historical conversation tasks are separate from the persistent execution ledger. memory_search recalls task summaries and original-message matches grouped and paginated by historical task; search_history searches hot and archived task history together. Use concise topical terms and explicit from/to dates when needed. Inspect coverage and unresolved messages before concluding that no matching history was found. Absence from list_tasks never establishes absence from historical conversations. Read a result using memory_get with sessionTaskId, then page its original messages with offset and open exact evidenceId sources, including surrounding conversation. Task summaries and assistant claims are leads, not independent verification. Cite original evidence. Archive temperature changes neither relevance nor credibility.
-Your main session uses the standard preset for clarification, retrieval, routing, task tracking, and reporting. Handle ordinary questions, progress checks, and brief work directly when that is sufficient; create or associate a persistent Task only when the user has a durable objective. Delegate substantive or long-running execution to workers instead of performing it in the main session.
-For durable tasks, dispatch DSH and Codex workers through personal_agent execute so Task, Execution and workspace coordination remain linked. For DSH workers, select an explicit agentPreset: standard for general research, analysis, and ordinary implementation; cordis for developing or configuring Harness plugins, bundles, tools, and presets; ptc for tasks that need PTC; minimal only for a small task whose required tools are available there. Give each worker a self-contained objective, workspace, constraints, and acceptance criteria. Use spawn when a DSH worker needs a different preset; the fork provider inherits the main session's standard preset and cannot select an independent mode. A Codex worker has no DSH mode. Assess the returned evidence before reporting completion: a successful turn is not Task completion without acceptance evidence.
-Treat Codex as a managed subordinate capability when its connection and execution routes are enabled. Ask personal_agent to route Codex work and follow its deterministic resume, fork, or new-session decision instead of asking the user to manage Codex sessions. When Codex execution is disabled, use a DSH worker rather than attempting a disabled route.
-For direct work on a persistent Task, call execute with worker internal before using tools, then finish_execution with the recorded work after it completes. cancel_execution retains a recovery hold until the outcome is reconciled. Use memory_search for prior conversations, preferences, decisions, entities, and evidence; candidate memories are leads, not facts. Use remember only for text stated in the current user message, and use correct_memory, confirm_memory, confirm_entity, retract_memory, or forget_memory only when the user explicitly requests that action. Respect all feature flags, approvals, workspace baselines, leases, and recovery holds. Never claim a protected action completed unless the tool result confirms it.
-Answer the user's visible request directly. Do not mention this injected context unless the user asks how the private assistant works.`
-
-export function assistantContextMessage() {
-  return Object.freeze({
-    id: randomUUID(),
-    role: 'user',
-    source: Object.freeze({
-      kind: 'agent-instructions',
-      form: 'instructions',
-      changes: Object.freeze([Object.freeze({ action: 'add', scope: 'session', path: 'personal-assistant' })]),
-    }),
-    content: Object.freeze([Object.freeze({ type: 'text', text: ASSISTANT_CONTEXT })]),
-  })
-}
+export { ASSISTANT_CONTEXT, assistantContextMessage } from './lib/assistant-context.js'
 
 export const TOOL = {
   name: 'personal_agent',
@@ -102,7 +86,14 @@ export function apply(ctx, pluginConfig = {}) {
       { name: 'starmap_bg.mp4', type: 'video/mp4', body: readFileSync(new URL('./assets/starmap_bg.mp4', import.meta.url)) }
     ]
     const service = new PersonalAgentService(config, { context: ctx, logger: ctx.logger ?? console })
-    const ready = service.initialize()
+    let projectionHandle = null
+    const ready = service.initialize().then(async health => {
+      const handle = await ctx.sessionProjections.register(wechatProjection)
+      projectionHandle = handle
+      service.mainSession = new MainSession(service, handle)
+      service.wechat = new WechatChannel(service, handle)
+      return health
+    })
     const disposers = []
     const backgroundTimers = new Map()
     let backgroundStarted = false
@@ -173,8 +164,13 @@ export function apply(ctx, pluginConfig = {}) {
     disposers.push(route('/settings', ['GET', 'PUT'], async req => {
       if (req.method === 'GET') return settingsView()
       const updated = service.updateRuntimeSettings(await requestJson(req))
+      if (Object.keys(updated.settings).some(key => key.startsWith('wechat') && updated.previous[key] !== updated.settings[key])) await service.wechat?.sync()
       syncBackgroundTimers?.({ historyBecameEnabled: !updated.previous.historyPeriodicSyncEnabled && updated.settings.historyPeriodicSyncEnabled })
       return settingsView()
+    }))
+    disposers.push(route('/wechat', ['GET', 'POST'], async req => {
+      if (req.method === 'GET') return service.wechatView()
+      return service.manageWechat(await requestJson(req))
     }))
     disposers.push(route('/settings/codex', 'POST', async req => {
       const body = await requestJson(req)
@@ -205,16 +201,19 @@ export function apply(ctx, pluginConfig = {}) {
       if (!taskId) throw new TypeError('id is required')
       return service.dashboardTaskDetail(taskId)
     }))
-    disposers.push(route('/session', 'GET', async req => {
-      const sessionId = new URL(req.url, 'http://localhost').searchParams.get('id')
-      if (!sessionId) {
-        const target = await service.assistantSessionTarget()
-        if (!target) return { sessionId: null, agentPreset: null }
-        const resolved = await ctx.sessionController.resolveAgent(target)
-        if (!resolved || 'error' in resolved) throw new Error(`Unable to load the private-assistant session: ${resolved?.error?.message ?? 'Unknown error'}`)
-        return { sessionId: target, agentPreset: ctx.agentPresets.presetForSession(resolved.agent.session) }
+    disposers.push(route('/session', ['GET', 'POST'], async req => {
+      if (req.method === 'GET') {
+        const sessionId = new URL(req.url, 'http://localhost').searchParams.get('id')
+        if (sessionId) return { assistant: service.isAssistantSession(sessionId) }
+        const binding = service.mainSession.binding()
+        if (binding) {
+          const target = await service.mainSession.ensure()
+          return { sessionId: target.sessionId, agentPreset: target.agentPreset }
+        }
+        return { sessionId: null, agentPreset: null }
       }
-      return { assistant: service.isAssistantSession(sessionId) }
+      const target = await service.mainSession.ensure()
+      return { sessionId: target.sessionId, agentPreset: target.agentPreset }
     }))
     const requireOperator = req => {
       if (authorizedOperator(req, config.operatorToken)) return
@@ -226,18 +225,9 @@ export function apply(ctx, pluginConfig = {}) {
     disposers.push(route('/operate', 'POST', async req => {
       return service.operate(await requestJson(req), { actor: 'operator', codexMutationAuthority: true, featureAuthority: true, approvalAuthority: true })
     }, { beforeReady: requireOperator }))
-    disposers.push(ctx.commands.register({
-      name: 'personal-assistant',
-      description: 'Load the persistent private-assistant role into the current DSH session.',
-      handler: async ({ agent, signal }) => {
-        await ready
-        signal?.throwIfAborted?.()
-        if (ctx.agentPresets.presetForSession(agent.session) !== 'standard') await ctx.agentPresets.select(agent, 'standard')
-        service.registerAssistantSession(agent.session.id)
-        agent.inject(assistantContextMessage())
-        await ctx.sessionPersistence.flush()
-        return { kind: 'success', text: '私人助理上下文已载入。' }
-      },
+    disposers.push(...registerWechatInteractions(ctx, ready, () => service.wechat.interactions))
+    disposers.push(ctx.on('session/event', session => {
+      if (service.wechat?.store.channel().session_id === session.id) service.wechat.kick()
     }))
     disposers.push(ctx.tools.register({ ...TOOL, execute: async (args, exec) => {
       await ready
@@ -286,6 +276,7 @@ export function apply(ctx, pluginConfig = {}) {
     const stopStartup = ctx.appReady.onReady(() => startup.resolve())
     const backgroundReady = Promise.all([ready, startup.promise]).then(() => {
       if (disposed) return
+      void service.wechat.sync().catch(error => ctx.logger?.warn?.('Personal-agent WeChat startup failed', error))
       backgroundStarted = true
       syncBackgroundTimers({ startup: true })
     }).catch(error => ctx.logger?.error?.('Personal-agent initialization failed', error))
@@ -299,6 +290,7 @@ export function apply(ctx, pluginConfig = {}) {
       await ready.catch(() => {})
       await backgroundReady
       await service.dispose()
+      await projectionHandle?.dispose()
     }
   }, 'Personal-agent ledger, history retrieval, router, controlled Codex adapter, and recovery')
 }
