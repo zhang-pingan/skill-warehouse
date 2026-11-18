@@ -45,7 +45,7 @@ export class BackgroundJobs {
       this.save({ ...this.state(name), running: false, lastFinishedAt: new Date(this.clock()).toISOString(), ...(failure ? { lastFailedAt: new Date(this.clock()).toISOString(), lastError: failure } : { lastSuccessfulAt: new Date(this.clock()).toISOString(), lastError: null }) })
       return result
     }, error => {
-      this.save({ ...this.state(name), running: false, lastFinishedAt: new Date(this.clock()).toISOString(), lastFailedAt: new Date(this.clock()).toISOString(), lastError: String(error.message).slice(0, 1000) })
+      this.save({ ...this.state(name), running: false, lastFinishedAt: new Date(this.clock()).toISOString(), lastFailedAt: new Date(this.clock()).toISOString(), lastError: String(error?.message ?? error).slice(0, 1000) })
       throw error
     }).finally(() => this.running.delete(name))
     this.running.set(name, pending)

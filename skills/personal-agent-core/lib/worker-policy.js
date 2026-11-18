@@ -1,39 +1,51 @@
-/** Validate deployment rules without inventing a DSH preset for Codex. */
-export function validateWorkerRules(rules) {
-  if (!Array.isArray(rules) || !rules.length || rules.length > 32) throw new TypeError('workerRules requires 1–32 rules')
+/** Default backend selection is configuration-owned; task classification belongs to the main model. */
+export const WORKER_PRIORITIES = Object.freeze({
+  dsh_standard: { worker: 'dsh_subagent', agentPreset: 'standard' },
+  dsh_cordis: { worker: 'dsh_subagent', agentPreset: 'cordis' },
+  codex: { worker: 'codex' },
+})
+
+/** Convert retired settings without retaining keyword dispatch. Unrepresentable rules remain in the migration record. */
+export function migrateWorkerSettings(input) {
+  const value = { ...input }
+  const legacy = Object.hasOwn(value, 'workerRules') || Object.hasOwn(value, 'defaultDshPreset')
+  if (!legacy) return { settings: value, migration: null }
+  const prior = { workerRules: value.workerRules, defaultDshPreset: value.defaultDshPreset }
+  const warnings = []
+  const rules = value.workerRules ?? []
+  const policies = { ...value.workerModelPolicies }
   for (const rule of rules) {
-    if (!rule || !['dsh_subagent','codex'].includes(rule.worker) || typeof rule.id !== 'string' || !rule.id.trim() || !Array.isArray(rule.keywords) || rule.keywords.some(word => typeof word !== 'string') || !Array.isArray(rule.capabilities) || rule.capabilities.some(capability => typeof capability !== 'string' || !capability.trim())) throw new TypeError('Invalid worker rule')
-    if (rule.worker === 'dsh_subagent' && rule.agentPreset !== undefined && (typeof rule.agentPreset !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(rule.agentPreset))) throw new TypeError('Invalid DSH preset in worker rule')
-    if (rule.worker === 'codex' && Object.hasOwn(rule, 'agentPreset')) throw new TypeError('Codex rules cannot contain agentPreset')
-    if (rule.modelPolicy && typeof rule.modelPolicy !== 'string') throw new TypeError('Invalid model policy reference')
+    const key = rule.worker === 'codex' ? 'codex' : rule.agentPreset === 'cordis' ? 'dsh_cordis' : 'dsh_standard'
+    const supported = rule.worker === 'codex' || ['standard','cordis',undefined].includes(rule.agentPreset)
+    if (rule.modelPolicy && supported && !policies[key]) policies[key] = rule.modelPolicy
+    const builtIn = rule.id==='harness-plugin' && rule.worker==='dsh_subagent' && rule.agentPreset==='cordis' && JSON.stringify(rule.keywords)===JSON.stringify(['插件','harness','cordis','bundle','preset']) || rule.id==='ptc' && rule.worker==='dsh_subagent' && rule.agentPreset==='ptc' && JSON.stringify(rule.keywords)===JSON.stringify(['ptc'])
+    if (rule.modelPolicy && (!supported || policies[key] !== rule.modelPolicy) || rule.capabilities?.length || rule.keywords?.length && !builtIn) warnings.push(rule.id)
   }
-  if (new Set(rules.map(rule => rule.id)).size !== rules.length) throw new TypeError('Worker rule ids must be unique')
-  return rules
+  const general = rules.find(rule => !rule.keywords?.length && !rule.capabilities?.length)
+  value.defaultWorkerPriority ??= value.defaultDshPreset === 'cordis' || general?.agentPreset === 'cordis' ? 'dsh_cordis' : general?.worker === 'codex' && value.codexWorkerEnabled ? 'codex' : 'dsh_standard'
+  if (value.defaultDshPreset && !['standard','cordis'].includes(value.defaultDshPreset)) warnings.push(`defaultDshPreset:${value.defaultDshPreset}`)
+  if (general?.agentPreset && value.defaultDshPreset && general.agentPreset!==value.defaultDshPreset) warnings.push(`default-conflict:${general.id}`)
+  value.workerModelPolicies = policies
+  delete value.workerRules
+  delete value.defaultDshPreset
+  return { settings: value, migration: { previous: prior, warnings, defaultWorkerPriority: value.defaultWorkerPriority } }
 }
 
-export const DEFAULT_WORKER_RULES = Object.freeze([
-  { id: 'harness-plugin', keywords: ['插件','harness','cordis','bundle','preset'], capabilities: [], worker: 'dsh_subagent', agentPreset: 'cordis' },
-  { id: 'ptc', keywords: ['ptc'], capabilities: [], worker: 'dsh_subagent', agentPreset: 'ptc' },
-  { id: 'general-dsh', keywords: [], capabilities: [], worker: 'dsh_subagent', agentPreset: 'standard' },
-  { id: 'general-codex', keywords: [], capabilities: [], worker: 'codex' },
-])
-
-/** Resolve backend, then DSH preset, then the backend-specific model policy. */
+/** Resolve the model's plugin-maintenance override or the user's default, without reading objective text. */
 export function resolveWorkerPolicy(config, args, availability) {
-  const text = String(args.objective ?? '').toLocaleLowerCase()
-  const required = args.requestedCapabilities ?? []
-  const candidates = config.workerRules.filter(rule => (!args.worker || rule.worker === args.worker)
-    && (!rule.keywords.length || rule.keywords.some(word => text.includes(word.toLocaleLowerCase())))
-    && required.every(capability => rule.capabilities.includes(capability)))
-  const rejected = []
-  for (const rule of candidates) {
-    if (!availability[rule.worker]) { rejected.push({ rule: rule.id, reason: 'unavailable-or-disabled' }); continue }
-    if (rule.worker === 'codex' && Object.hasOwn(args, 'agentPreset')) throw new Error('agentPreset is only valid for a DSH worker')
-    const agentPreset = rule.worker === 'dsh_subagent' ? args.agentPreset ?? rule.agentPreset ?? config.defaultDshPreset : undefined
-    if (agentPreset && !config.dshWorkerPresets.includes(agentPreset)) { rejected.push({ rule: rule.id, reason: 'preset-not-allowed' }); continue }
-    const policy = rule.modelPolicy ? config.modelPolicies[rule.modelPolicy] : null
-    if (rule.modelPolicy && (!policy || policy.worker !== rule.worker)) throw new Error(`Invalid model policy: ${rule.modelPolicy}`)
-    return { worker: rule.worker, ...(agentPreset ? { agentPreset } : {}), ruleId: rule.id, model: policy ?? null, rejected }
+  const specified = args.worker !== undefined || args.agentPreset !== undefined
+  if (specified && (args.worker !== 'dsh_subagent' || args.agentPreset !== 'cordis')) {
+    throw Object.assign(new Error('新建 worker 仅允许 DSH 插件开发或维护时同时指定 dsh_subagent 和 cordis；其他任务请省略 worker 和 agentPreset，使用默认优先级。'), { code: 'WORKER_SELECTION_INVALID' })
   }
-  throw Object.assign(new Error('No enabled worker satisfies the configured task policy'), { code: 'WORKER_UNAVAILABLE', rejected })
+  const priority = specified ? 'dsh_cordis' : config.defaultWorkerPriority
+  const selected = WORKER_PRIORITIES[priority]
+  if (!selected) throw new TypeError('Invalid defaultWorkerPriority')
+  if (!availability[selected.worker]) throw Object.assign(new Error(`所选 worker 尚未启用或未就绪：${priority}。请检查设置后重试。`), { code: 'WORKER_UNAVAILABLE', priority })
+  if (selected.agentPreset && !config.dshWorkerPresets.includes(selected.agentPreset)) throw Object.assign(new Error(`DSH 模式不在允许列表内：${selected.agentPreset}`), { code: 'WORKER_PRESET_UNAVAILABLE' })
+  const capabilities = config.workerCapabilities[selected.worker] ?? []
+  if ((args.requestedCapabilities ?? []).some(item => !capabilities.includes(item))) throw Object.assign(new Error('所选 worker 未配置请求的能力，请检查 worker 能力设置。'), { code: 'WORKER_CAPABILITY_UNAVAILABLE' })
+  const policyName = config.workerModelPolicies[priority]
+  const model = policyName ? config.modelPolicies[policyName] : null
+  if (policyName && model?.worker !== selected.worker) throw new TypeError(`Invalid worker model policy: ${policyName}`)
+  return { ...selected, priority, selection: specified ? 'model-dsh-plugin' : 'configured-default', model, rejected: [] }
 }

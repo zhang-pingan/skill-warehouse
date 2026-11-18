@@ -332,7 +332,7 @@ export class Ledger {
       ORDER BY at DESC LIMIT ?`).all(taskId, taskId, Math.min(500, limit)).map(row => ({ ...row, detail: parseJson(row.detail, {}) }))
   }
 
-  /** Read current criterion results for the latest substantive attempt in this scope. */
+  /** Read current criterion identifiers, bound result evidence and verification for the latest substantive attempt. */
   acceptanceStatus(taskId, stepId = null) {
     const latest = this.db.prepare(`SELECT e.execution_id,e.execution_state FROM executions e
       WHERE e.task_id=? AND e.step_id IS ? AND (e.executor_kind<>'codex' OR EXISTS
@@ -341,7 +341,14 @@ export class Ledger {
     const rows = latest ? this.db.prepare(`SELECT * FROM acceptance_results WHERE execution_id=? ORDER BY sequence`).all(latest.execution_id) : []
     const effective = new Map()
     for (const row of rows) effective.set(row.criterion_id, { ...row, evidenceIds: parseJson(row.evidence_ids_json, []) })
-    return { executionId: latest?.execution_id ?? null, executionState: latest?.execution_state ?? null, results: [...effective.values()] }
+    const scope = stepId === null
+      ? this.db.prepare('SELECT acceptance_json FROM tasks WHERE task_id=?').get(taskId)
+      : this.db.prepare('SELECT acceptance_json FROM task_steps WHERE task_id=? AND step_id=?').get(taskId, stepId)
+    const evidenceIds = latest ? this.db.prepare(`SELECT evidence_id FROM evidence WHERE task_id=? AND execution_id=? AND redaction_state='none'
+      AND source_type IN ('worker_terminal','subagent_result','internal_result') ORDER BY ingested_at DESC,evidence_id LIMIT 32`)
+      .all(taskId, latest.execution_id).map(row => row.evidence_id) : []
+    return { executionId: latest?.execution_id ?? null, executionState: latest?.execution_state ?? null,
+      criteria: criteriaOf(parseJson(scope?.acceptance_json, [])), evidenceIds, results: [...effective.values()] }
   }
 
   assertAccepted(taskId, stepId, definitions) {
@@ -449,8 +456,8 @@ export class Ledger {
 
   saveRouteDecision(decision, { triggerId = null, taskId = null, targetSessionRefId = null, decider = 'deterministic-router' } = {}) {
     const id = newId('route')
-    this.db.prepare(`INSERT OR IGNORE INTO route_decisions(route_decision_id,trigger_id,task_id,semantic_action,delivery_action,candidate_snapshot_json,authorized_target_session_ref_id,reason_codes_json,input_snapshot_hash,decided_at,decider,explanation)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, triggerId, taskId, decision.semanticAction, decision.deliveryAction, json(decision.snapshot), targetSessionRefId, json(decision.reasonCodes), decision.inputSnapshotHash, nowIso(this.clock), decider, decision.explanation)
+    this.db.prepare(`INSERT INTO route_decisions(route_decision_id,trigger_id,task_id,semantic_action,delivery_action,candidate_snapshot_json,authorized_target_session_ref_id,reason_codes_json,input_snapshot_hash,decided_at,decider,explanation)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trigger_id) WHERE trigger_id IS NOT NULL DO UPDATE SET task_id=excluded.task_id,semantic_action=excluded.semantic_action,delivery_action=excluded.delivery_action,candidate_snapshot_json=excluded.candidate_snapshot_json,authorized_target_session_ref_id=excluded.authorized_target_session_ref_id,reason_codes_json=excluded.reason_codes_json,input_snapshot_hash=excluded.input_snapshot_hash,decided_at=excluded.decided_at,explanation=excluded.explanation WHERE NOT EXISTS(SELECT 1 FROM executions WHERE route_decision_id=route_decisions.route_decision_id)`).run(id, triggerId, taskId, decision.semanticAction, decision.deliveryAction, json(decision.snapshot), targetSessionRefId, json(decision.reasonCodes), decision.inputSnapshotHash, nowIso(this.clock), decider, decision.explanation)
     return triggerId ? this.db.prepare('SELECT route_decision_id FROM route_decisions WHERE trigger_id=?').get(triggerId).route_decision_id : id
   }
 

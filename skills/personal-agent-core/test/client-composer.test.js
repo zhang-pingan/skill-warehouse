@@ -218,8 +218,8 @@ function settingsDraft() {
     memoryExtractionIntervalMs: 300000, memoryExtractionBatchSize: 12, memoryExtractionRetryLimit: 3, memoryExtractionBudgetMs: 600000,
     cleanupEnabled: true, cleanupIntervalMs: 86400000, semanticRoutingEnabled: true, analysisBudgetMs: 120000, analysisInputChars: 48000,
     analysisOutputChars: 12000, backgroundModelPolicy: '', dshWorkerEnabled: true, workerHeartbeatEnabled: true, dshWorkerPresets: ['standard'],
-    defaultDshPreset: 'standard', workerBudgetMs: 1800000, routeResumeThreshold: 0.86, routeAmbiguityGap: 0.08,
-    leaseTtlMs: 120000, workerHeartbeatMs: 30000, workerRules: [{ id: 'general', worker: 'dsh_subagent', keywords: [], capabilities: [], agentPreset: 'standard', _key: 'rule-0' }],
+    defaultWorkerPriority: 'dsh_standard', workerBudgetMs: 1800000, routeResumeThreshold: 0.86, routeAmbiguityGap: 0.08,
+    leaseTtlMs: 120000, workerHeartbeatMs: 30000, routeCandidateLimit: 50, workerModelPolicies: {}, workerCapabilities: {dsh_subagent: [],codex: []},
     modelPolicies: [],
   }
 }
@@ -230,7 +230,7 @@ function settingsTestScope(React, overrides = {}) {
     React, h, settingUnits: clientSettingUnits, settingsToDraft: value => value, settingsFromDraft: value => value,
     settingsErrors: () => ({}), SettingsSelect: props => h('button', props),
     SettingsIconAction: ({ label, disabled, onClick }) => h('button', { type: 'button', 'aria-label': label, disabled, onClick }, label),
-    WechatControls: 'wechat-controls', Button: 'button', Switch: 'switch', Checkbox: 'checkbox', Menu: 'menu', Tooltip: 'tooltip',
+    MainSessionControls: 'MainSessionControls', WechatControls: 'wechat-controls', Button: 'button', Switch: 'switch', Checkbox: 'checkbox', Menu: 'menu', Tooltip: 'tooltip',
     IconRefreshOutlineRegular: 'refresh', IconPlusOutlineRegular: 'plus', IconTrashOutlineRegular: 'trash',
     IconChevronDownOutlineRegular: 'down', IconChevronRightOutlineRegular: 'right',
     presetLabel: id => id, presetDescription: id => id, formatDate: () => '', requestSettings: async () => ({}), requestCodexToggle: async () => ({}),
@@ -268,7 +268,7 @@ test('settings section renders native toggles and structured editors without JSO
   assert.equal(nodes.some(node => node.type === 'textarea'), false)
   assert.ok(nodes.some(node => node.type === 'details'))
   const modules = nodes.filter(node => node.props?.className === 'pac-settings-group')
-  assert.equal(modules.length, 8)
+  assert.equal(modules.length, 9)
   assert.ok(modules.every(node => node.type === 'details' && node.props.open === false))
   const worker = modules.find(node => node.props.key === 'workerGroup')
   assert.match(JSON.stringify(worker), /codexWorkerEnabled/)
@@ -315,18 +315,13 @@ test('settings draft serializes structured rules and model policies with normali
   draft.importIntervalMs = 90
   draft.backgroundModelPolicy = ' analysis '
   draft.modelPolicies = [{ _key: 'policy-0', name: ' analysis ', worker: 'dsh_subagent', provider: ' openai ', model: ' model-x ', effort: 'high' }]
-  draft.workerRules = [
-    { _key: 'rule-0', id: ' general ', worker: 'dsh_subagent', keywords: ['code'], capabilities: [], agentPreset: 'standard', modelPolicy: ' analysis ' },
-    { _key: 'rule-1', id: ' codex ', worker: 'codex', keywords: [], capabilities: [], agentPreset: undefined },
-  ]
+  draft.workerModelPolicies = { dsh_standard: ' analysis ' }
   const normalized = JSON.parse(JSON.stringify(helpers.settingsFromDraft(draft)))
   assert.equal(normalized.importIntervalMs, 5400000)
   assert.equal(normalized.backgroundModelPolicy, 'analysis')
   assert.equal(normalized.modelPolicies.analysis.provider, 'openai')
   assert.equal(normalized.modelPolicies.analysis.model, 'model-x')
-  assert.equal(normalized.workerRules[0].id, 'general')
-  assert.equal(normalized.workerRules[0].modelPolicy, 'analysis')
-  assert.equal(Object.hasOwn(normalized.workerRules[1], 'agentPreset'), false)
+  assert.equal(normalized.workerModelPolicies.dsh_standard, 'analysis')
   assert.equal(Object.hasOwn(normalized, 'codexWorkerEnabled'), false)
   assert.equal(helpers.settingsToDraft({ ...normalized, importIntervalMs: 5400000 }).importIntervalMs, 90)
 })
@@ -356,4 +351,24 @@ test('client manifest and locales expose the simplified assistant surface', () =
     assert.equal(Object.hasOwn(locale, 'effort'), false)
     assert.equal(Object.hasOwn(locale, 'workspace'), false)
   }
+})
+
+test('reset suspends a late old-session retain before mounting the replacement', async () => {
+  const ready = Promise.withResolvers(), entered = Promise.withResolvers()
+  const canonical = { sessionId: 'old', agentPreset: 'standard' }
+  const released = [], retained = []
+  const host = assistantHost({ sessions: { retain(id) { retained.push(id); entered.resolve(); return { id, ready: id === 'old' ? ready.promise : Promise.resolve(), release() { released.push(id) } } } } }, canonical)
+  const loading = host.ensure()
+  await entered.promise
+  host.suspend()
+  canonical.sessionId = 'new'
+  const resumed = host.resume()
+  ready.resolve()
+  assert.equal(await loading, null)
+  assert.equal((await resumed).id, 'new')
+  assert.deepEqual(retained, ['old', 'new'])
+  assert.deepEqual(released, ['old'])
+  assert.equal(host.getSnapshot().reference.id, 'new')
+  host.dispose()
+  assert.deepEqual(released, ['old', 'new'])
 })

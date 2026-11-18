@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "b0-confirmation-v1",
+  "status": "frozen-design-not-a-candidate-result",
+  "scope": {
+    "stages": [
+      "retrieval",
+      "task-context"
+    ],
+    "b0Requirement": "Freeze the design, inputs, scoring and reproducible baseline; no optimization candidate is required for B0.",
+    "applicationRequirement": "A fixed candidate must pass a fresh admitted confirmation cohort before production application.",
+    "population": "Independently authored benchmark source families admitted under this protocol; not the population of real user conversations.",
+    "existingFamiliesArePoweredConfirmation": false,
+    "inspectExistingHoldout": false
+  },
+  "sampling": {
+    "unit": "independent-source-family",
+    "pairedRepeats": 3,
+    "withinFamily": "Average all predeclared eligible outcomes over all three repetitions in each version, then subtract control from candidate.",
+    "betweenFamilies": "Equal family weights; questions, repetitions and worker turns are not independent samples.",
+    "qualityRange": [
+      0,
+      1
+    ],
+    "pairedDifferenceRange": [
+      -1,
+      1
+    ],
+    "strata": [
+      "history-recall",
+      "target-identity",
+      "continuation-decision",
+      "temporal-update",
+      "trust-state",
+      "context-transfer",
+      "no-history-needed",
+      "lifecycle"
+    ],
+    "allocation": "Draw each family independently from the frozen eight-stratum mixture with probability 1/8 per stratum; record the schedule before authoring sources and before any model run. Metric eligibility depends on the authored scenario, never on outputs. Register N separately for each metric. A per-stratum claim requires its own adequate eligible cohort; eight-stratum coverage alone is not subgroup power.",
+    "admission": [
+      "Distinct underlying source graph, actors, chronology, dependencies and constraints; replacing names or numbers alone does not establish independence.",
+      "All derived questions, revisions, paraphrases and source lineage remain in one family and one split.",
+      "Audit template dependence; merge correlated sources into a larger cluster and count that cluster once.",
+      "Gold and prohibited outcomes are derived from sources, checked before model execution and kept out of model inputs.",
+      "Use synthetic or separately authorized sources; do not read private conversations to create samples by default.",
+      "Freeze the cohort manifest and hashes before either version is run; retire the cohort from unseen confirmation once any outputs are inspected."
+    ],
+    "pairedConditions": [
+      "source snapshot",
+      "native starting history",
+      "model and reasoning settings",
+      "permissions",
+      "input and output budgets",
+      "timeouts and retries",
+      "cache conditions",
+      "scoring rules"
+    ],
+    "order": "Seeded random AB/BA order within each family and repetition; record the seed and complete schedule.",
+    "failures": "Timeouts, parsing failures and rejected requests remain in the denominator and consume recorded resources; a missing outcome cannot be replaced by a successful rerun."
+  },
+  "inference": {
+    "method": "two-sided-empirical-bernstein-paired-family-mean",
+    "reference": "Maurer and Pontil (2009), Theorem 4, scaled from [0,1] to [-1,1], union bound for both tails",
+    "referenceUrl": "https://arxiv.org/abs/0907.3740",
+    "halfWidth": "sqrt(2 * unbiasedSampleVariance * log(4 / alpha) / n) + 14 * log(4 / alpha) / (3 * (n - 1))",
+    "interval": "[max(-1, meanDifference - halfWidth), min(1, meanDifference + halfWidth)]",
+    "minimumFamilies": 2,
+    "overallFalseApplicationBudget": 0.05,
+    "confirmationAlpha": "0.05 / (j * (j + 1))",
+    "confirmationIndex": "j starts at 1 and increases for every revealed formal candidate comparison across both stages; never reset it after failures or between stages.",
+    "minimumIntervalCoverage": 0.95,
+    "allRequiredMetrics": "Every declared criterion must pass. This is an intersection-union decision; individual intervals do not claim simultaneous coverage.",
+    "bootstrapRole": "Existing family bootstrap intervals remain descriptive; they do not replace the decision interval or increase the independent sample count.",
+    "optionalStopping": false
+  },
+  "qualityRoute": {
+    "primaryMetricOptions": [
+      "target-decision-correctness",
+      "evidence-supported-answer-pass-rate",
+      "context-constraint-pass-rate",
+      "artifact-result-pass-rate"
+    ],
+    "selectPrimaryBeforeCandidate": true,
+    "minimumAbsoluteImprovement": 0.05,
+    "requireDifferenceIntervalLowerGreaterThan": 0,
+    "otherQualityObservedMaximumDecline": 0.01,
+    "otherQualityNoninferiorityClaim": false,
+    "relativeErrorReductionRouteEnabled": false,
+    "ceilingRule": "If a +5pp absolute improvement is unattainable, this quality route cannot authorize application. Do not switch to relative error reduction after viewing candidate outputs; a separate design must be frozen before such an experiment.",
+    "maximumP95LatencyRatio": 1.1,
+    "maximumMeanTokensPerRequestRatio": 1.1
+  },
+  "efficiencyRoute": {
+    "primaryMetricOptions": [
+      "mean-end-to-end-latency",
+      "mean-total-tokens-per-logical-request"
+    ],
+    "minimumRelativeReduction": 0.2,
+    "positiveImprovementInterval": "Predeclare a valid upper bound B for every logical request, including retries. For each family use (meanControlCost - meanCandidateCost) / B in [-1,1]; its empirical Bernstein interval lower bound must be >0. The relative point estimate is 1 - meanCandidateCost / meanControlCost, with positive control cost.",
+    "outOfRangeCost": "Do not clip, drop or rescale after observing results; an exceeded registered bound or unknown usage makes this comparison insufficient for application.",
+    "qualityNoninferiorityMargin": 0.01,
+    "requireEachQualityDifferenceIntervalLowerGreaterThan": -0.01,
+    "maximumP95LatencyRatio": 1.1,
+    "maximumMeanTokensPerRequestRatio": 1.1,
+    "quantilePrimarySupported": false
+  },
+  "samplePlanning": {
+    "method": "Normal approximation for planning only, using the registered empirical Bernstein width evaluated at the hypothesized paired variance; not an achieved-power guarantee.",
+    "targetApproximatePower": 0.8,
+    "assumedPairedDiscordance": 0.25,
+    "varianceModel": "D in {-1,0,1}; P(D=1)=(q+delta)/2, P(D=-1)=(q-delta)/2, Var(D)=q-delta^2. Three repetitions are conservatively treated as fully correlated for planning.",
+    "qualityTrueImprovementAlternative": 0.08,
+    "noninferiorityTrueDifferenceAlternative": 0,
+    "familyCountMultiple": 8,
+    "qualityMinimumFamiliesPerPrimary": 1200,
+    "efficiencyMinimumFamiliesPerQualityMetric": 50000,
+    "maximumSearchFamilies": 2000000,
+    "sensitivityDiscordance": [
+      0.1,
+      0.25,
+      0.5
+    ],
+    "sensitivityQualityTrueImprovements": [
+      0.05,
+      0.08,
+      0.1
+    ],
+    "registeredN": "Use the larger of the route minimum, the planning calculation for its next confirmation index, and every required outcome/stratum sample requirement. For efficiency also size the cost primary using a separately registered bounded-cost effect and variance from independent exploratory data. Families not eligible for a metric do not count toward its N. Multiples of eight are a batching convention, not fixed stratified allocation.",
+    "atThresholdWarning": "A true +5pp benefit has at most about 50% probability of satisfying a >=5pp point-estimate gate under a symmetric continuous approximation, even with unlimited N; +8pp is the planning alternative, not a lower application threshold.",
+    "assumptionFailure": "If independent preconfirmation pilot evidence does not support the registered variance/effect assumptions, freeze a larger N before revealing any confirmation output. An underpowered completed comparison is insufficient evidence, not a failed optimization for the stopping rule."
+  },
+  "protectedOutcomes": {
+    "criticalRegressionMaximum": 0,
+    "criticalRegressionTypes": [
+      "wrong-session-write",
+      "cross-project-contamination",
+      "unauthorized-permission-expansion",
+      "candidate-memory-auto-confirmation",
+      "duplicate-dispatch"
+    ],
+    "subgroups": "Report every registered important group. An observed decline beyond its predeclared tolerance, a critical failure, or unmeasured required resources prevents application; do not hide groups in an overall average.",
+    "costAccounting": "Count all attempts and retries per logical request; preserve failures, unknown usage and timeouts. Report p50, p95, mean, calls, input/output tokens, startup, event-loop delay, peak memory, index size and update cost where applicable.",
+    "p95Method": "Compute the empirical p95 over the fixed registered logical-request mixture. Keep each family and its repetitions intact in descriptive resampling; do not claim a rigorous p95 confidence guarantee from the mean interval."
+  },
+  "preregistration": {
+    "requiredFields": [
+      "experimentId",
+      "stage",
+      "confirmationIndex",
+      "singleChangedFactor",
+      "controlCodeHash",
+      "candidateCodeHash",
+      "b0CodeHash",
+      "modelSettingsHash",
+      "sourceManifestHash",
+      "goldHash",
+      "scorerHash",
+      "primaryMetric",
+      "route",
+      "eligibleFamiliesByMetric",
+      "fixedFamilyCount",
+      "planningAssumptions",
+      "allQualityMetrics",
+      "subgroupTolerances",
+      "resourceCaps",
+      "pairedScheduleSeed",
+      "timeoutsAndRetries",
+      "analysisCommand",
+      "nativeRegressionCommands"
+    ],
+    "beforeRunning": "Freeze and hash this registration before either version sees the confirmation sources.",
+    "results": "Retain complete single-step and cumulative-versus-stage-baseline results, including failures and all original outputs.",
+    "analysisRepair": "A scorer or fixture defect invalidates the affected comparison; retain the reason and rerun both versions. An exposed cohort becomes regression data, so a claim of unseen confirmation requires a fresh admitted cohort.",
+    "stopping": "No interim significance checks or outcome-driven sample extensions. Infrastructure failure, incomplete data and insufficient power do not count as one of the three measured unsuccessful candidate experiments required to stop a stage.",
+    "sequence": "Finish and apply a confirmed retrieval improvement, freeze and remeasure B2, then begin task-context optimization. A protocol or baseline completion is not an optimization application."
+  }
+}

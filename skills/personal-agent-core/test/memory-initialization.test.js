@@ -50,6 +50,8 @@ test('initialization empties memory and dependent records, preserves preferences
   db.prepare("INSERT INTO import_cursors(importer_id,source_uri,source_instance_id,cursor_json,last_attempted_at) VALUES('old-import','old-source','old-file','{}','2026-11-12T00:00:00Z')").run()
   service.backgroundJobs.configure('memory-extraction', false, 4000)
   service.backgroundJobs.save({ name: 'old-job', lastError: 'stale failure' })
+  const mainReset = { name: 'main-session-reset', archiveNumber: 3, state: 'succeeded', committed: true, oldSessionId: 'archived-main', newSessionId: 'assistant-main' }
+  service.backgroundJobs.save(mainReset)
   service.database.backup(path.join(service.config.backupDir, 'ledger-2026-11-14T00.00.00.000Z.sqlite'))
   const personalBackup = path.join(service.config.backupDir, 'manual.sqlite')
   writeFileSync(personalBackup, 'unmanaged')
@@ -72,6 +74,7 @@ test('initialization empties memory and dependent records, preserves preferences
   assert.equal(db.prepare("SELECT 1 FROM import_cursors WHERE source_uri='old-source'").get(), undefined)
   assert.equal(service.backgroundJobs.state('memory-extraction').enabled, false)
   assert.equal(service.backgroundJobs.state('old-job').lastError, undefined)
+  assert.deepEqual(service.backgroundJobs.state('main-session-reset'), mainReset)
   assert.equal(service.database.listManagedBackups().length, 0)
   assert.ok(existsSync(personalBackup))
   assert.ok(existsSync(path.join(root, 'output.txt')))

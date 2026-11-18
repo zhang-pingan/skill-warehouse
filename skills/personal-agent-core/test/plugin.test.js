@@ -20,11 +20,12 @@ import path from 'node:path'
 import { apply, assistantContextMessage, ASSISTANT_CONTEXT, TOOL } from '../index.js'
 import { MainSession } from '../lib/main-session.js'
 import { PersonalAgentService } from '../lib/service.js'
+import { MemorySystem } from '../lib/memory-system.js'
 
 function validateSchema(definition) {
   assert.equal(typeof definition.name, 'string')
   assert.equal(definition.parameters.type, 'object')
-  assert.equal(definition.output.schema.type, 'object')
+  assert.deepEqual(definition.output.schema.oneOf.map(variant=>variant.type), ['object','array','null'])
   assert.equal(typeof definition.output.render, 'function')
 }
 
@@ -35,18 +36,18 @@ test('assistant session context uses the native instruction projection without b
   assert.equal(message.role, 'user')
   assert.equal(message.source.kind, 'agent-instructions')
   assert.equal(message.source.form, 'instructions')
-  assert.deepEqual(message.source.changes, [{ action: 'add', scope: 'session', path: 'personal-assistant' }])
+  assert.deepEqual(message.source.changes, [{ action: 'add', scope: 'session', path: 'personal-assistant/v2' }])
   assert.equal(message.content[0].type, 'text')
   assert.equal(message.content[0].text, ASSISTANT_CONTEXT)
   assert.match(ASSISTANT_CONTEXT, /personal_agent/)
-  assert.match(ASSISTANT_CONTEXT, /resume, fork, or new-session/)
-  assert.match(ASSISTANT_CONTEXT, /explicit agentPreset: standard/)
-  assert.match(ASSISTANT_CONTEXT, /cordis for developing or configuring Harness plugins/)
-  assert.match(ASSISTANT_CONTEXT, /fork provider inherits the main session's standard preset/)
+  assert.match(ASSISTANT_CONTEXT, /jointly discover execution Tasks and historical DSH\/Codex/)
+  assert.match(ASSISTANT_CONTEXT, /provide worker dsh_subagent AND agentPreset cordis/)
+  assert.match(ASSISTANT_CONTEXT, /omit BOTH worker and agentPreset/)
+  assert.match(ASSISTANT_CONTEXT, /Existing sessions retain their backend, preset and model/)
   assert.match(ASSISTANT_CONTEXT, /ordinary questions, progress checks, and brief work directly/)
   assert.match(ASSISTANT_CONTEXT, /grouped and paginated by historical task/)
   assert.match(ASSISTANT_CONTEXT, /Absence from list_tasks never establishes absence from historical conversations/)
-  assert.match(ASSISTANT_CONTEXT, /successful turn is not Task completion/)
+  assert.match(ASSISTANT_CONTEXT, /finishing a turn is not Task completion/)
   assert.equal(Object.isFrozen(message), true)
   assert.equal(Object.isFrozen(message.source), true)
   assert.equal(Object.isFrozen(message.source.changes), true)
@@ -140,7 +141,7 @@ test('operator HTTP route requires an independent bearer token', async () => {
   }
   try {
     apply(ctx, { dataDir: path.join(root, 'data'), codexHome: path.join(root, 'codex'), operatorToken: '0123456789abcdef0123456789abcdef' })
-    assert.deepEqual([...routes.keys()].sort(), ['/api/personal-agent/assets/starmap_bg.mp4', '/api/personal-agent/dashboard', '/api/personal-agent/memory', '/api/personal-agent/memory/extraction', '/api/personal-agent/memory/initialization', '/api/personal-agent/memory/item', '/api/personal-agent/operate', '/api/personal-agent/session', '/api/personal-agent/settings', '/api/personal-agent/settings/codex', '/api/personal-agent/task', '/api/personal-agent/wechat'])
+    assert.deepEqual([...routes.keys()].sort(), ['/api/personal-agent/assets/starmap_bg.mp4', '/api/personal-agent/dashboard', '/api/personal-agent/memory', '/api/personal-agent/memory/extraction', '/api/personal-agent/memory/initialization', '/api/personal-agent/memory/item', '/api/personal-agent/operate', '/api/personal-agent/session', '/api/personal-agent/session/reset', '/api/personal-agent/settings', '/api/personal-agent/settings/codex', '/api/personal-agent/task', '/api/personal-agent/wechat'])
     const denied = await invoke(null)
     assert.equal(denied.statusCode, 403)
     assert.equal(JSON.parse(denied.body).code, 'OPERATOR_AUTH_REQUIRED')
@@ -439,6 +440,108 @@ test('automatic history sync waits for launcher readiness and shares the periodi
     assert.equal(startupListenerRemoved, true)
     assert.equal(intervals.size, 0)
   } finally {
+    await cleanup?.()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('startup and periodic history imports record extraction failures under their own job', async t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'personal-agent-background-test-'))
+  let cleanup, tool, announceReady, service
+  let imports = 0
+  let extractions = 0
+  const warnings = []
+  const intervals = new Map()
+  const runs = Array.from({ length: 3 }, () => ({ entered: Promise.withResolvers(), release: Promise.withResolvers() }))
+  const initialize = PersonalAgentService.prototype.initialize
+  t.mock.method(PersonalAgentService.prototype, 'initialize', async function () {
+    service = this
+    return initialize.call(this)
+  })
+  t.mock.method(PersonalAgentService.prototype, 'importHistory', async () => { imports += 1; return { imported: true } })
+  t.mock.method(MemorySystem.prototype, 'run', () => {
+    const run = runs[extractions++]
+    run.entered.resolve()
+    return run.release.promise
+  })
+  const ctx = {
+    effect(callback) { cleanup = collectEffect(callback) },
+    on() { return () => {} },
+    sessionProjections: { async register() { return { stateOf: () => ({ contextLoaded: true }), async dispose() {} } } },
+    appReady: { onReady(listener) { announceReady = listener; return () => {} } },
+    webServer: { register: () => () => {} }, connection: {},
+    credentials: { async readRecord() { return null } },
+    tools: { register(definition) { tool = definition; return () => {} } },
+    timer: { interval(callback, ms) { intervals.set(ms, callback); return () => intervals.delete(ms) } },
+    logger: { warn(message) { warnings.push(message) }, error(error) { throw error } },
+  }
+  const drain = async () => {
+    while (service.inFlightOperations.size) await Promise.all([...service.inFlightOperations])
+  }
+  try {
+    apply(ctx, { dataDir: path.join(root, 'data'), codexHome: path.join(root, 'codex') })
+    await tool.execute({ action: 'health' })
+    for (let index = 0; index < 2; index += 1) {
+      if (index === 0) announceReady()
+      else intervals.get(15 * 60_000)()
+      await runs[index].entered.promise
+      const history = service.backgroundJobs.state('history')
+      assert.equal(history.running, false)
+      assert.equal(history.lastError, null)
+      assert.ok(history.lastSuccessfulAt)
+      assert.equal(service.backgroundJobs.state('memory-extraction').running, true)
+      runs[index].release.reject(new Error('extraction unavailable'))
+      await drain()
+      assert.equal(imports, index + 1)
+      assert.equal(service.backgroundJobs.state('history').lastError, null)
+      assert.equal(service.backgroundJobs.state('history').lastSuccessfulAt, history.lastSuccessfulAt)
+      assert.equal(service.backgroundJobs.state('memory-extraction').lastError, 'extraction unavailable')
+      assert.equal(service.backgroundJobs.state('memory-extraction').running, false)
+    }
+    assert.deepEqual(warnings, ['Personal-agent memory extraction failed', 'Personal-agent memory extraction failed'])
+    intervals.get(5 * 60_000)()
+    await runs[2].entered.promise
+    runs[2].release.resolve({ processed: 1 })
+    await drain()
+    assert.equal(imports, 2)
+    assert.equal(extractions, 3)
+    assert.equal(service.backgroundJobs.state('memory-extraction').lastError, null)
+    assert.ok(service.backgroundJobs.state('memory-extraction').lastSuccessfulAt)
+  } finally {
+    for (const run of runs) run.release.resolve()
+    await cleanup?.()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('shutdown drains an accepted history import without starting extraction afterward', async t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'personal-agent-background-close-test-'))
+  const entered = Promise.withResolvers(), release = Promise.withResolvers()
+  let cleanup, tool, announceReady
+  let extractions = 0
+  t.mock.method(PersonalAgentService.prototype, 'importHistory', async () => { entered.resolve(); await release.promise })
+  t.mock.method(MemorySystem.prototype, 'run', async () => { extractions += 1 })
+  const ctx = {
+    effect(callback) { cleanup = collectEffect(callback) }, on() { return () => {} },
+    sessionProjections: { async register() { return { stateOf: () => ({ contextLoaded: true }), async dispose() {} } } },
+    appReady: { onReady(listener) { announceReady = listener; return () => {} } },
+    webServer: { register: () => () => {} }, connection: {},
+    tools: { register(definition) { tool = definition; return () => {} } },
+    timer: { interval: () => () => {} }, logger: { warn() {}, error(error) { throw error } },
+  }
+  try {
+    apply(ctx, { dataDir: path.join(root, 'data'), codexHome: path.join(root, 'codex') })
+    await tool.execute({ action: 'health' })
+    announceReady()
+    await entered.promise
+    let closed = false
+    const closing = cleanup().then(() => { closed = true })
+    assert.equal(closed, false)
+    release.resolve()
+    await closing
+    assert.equal(extractions, 0)
+  } finally {
+    release.resolve()
     await cleanup?.()
     rmSync(root, { recursive: true, force: true })
   }

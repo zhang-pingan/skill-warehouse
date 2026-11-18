@@ -18,7 +18,8 @@ export async function runWechatProbe(ctx, root) {
   try {
     await service.initialize()
     service.mainSession=new MainSession(service,projection)
-    service.wechat=new WechatChannel(service,projection,{api:{async send(_credential,_peer,_context,id,text){sent.push({id,text})}}})
+    service.wechat=new WechatChannel(service,projection,{api:{async send(_credential,_peer,_context,id,text){sent.push({id,text})},
+      async updates(_credential,_cursor,signal){return new Promise((_,reject)=>{if(signal.aborted)reject(signal.reason);else signal.addEventListener('abort',()=>reject(signal.reason),{once:true})})}}})
     const [target,other]=await Promise.all([service.mainSession.ensure(),service.mainSession.ensure()])
     assert.equal(target.sessionId,other.sessionId)
     target.agent.inject(assistantContextMessage())
@@ -115,7 +116,37 @@ export async function runWechatProbe(ctx, root) {
     finally {service.database.transaction=transaction}
     await target.agent.whenIdle()
     assert.equal(channel.interactions.view().length,0)
+    const credentialBefore=await channel.credentials(), receiveCursor=channel.store.channel().cursor
+    const memoriesBefore=service.database.db.prepare('SELECT * FROM memory_records ORDER BY memory_id').all()
+    const reset=service.mainSession.reset
+    reset.start({confirmed:true,expectedSessionId:target.sessionId})
+    await reset.operation
+    assert.equal(reset.view().state,'succeeded',JSON.stringify(reset.view()))
+    const replacement=await service.mainSession.ensure()
+    assert.notEqual(replacement.sessionId,target.sessionId)
+    assert.equal(ctx.workspaceRegistry.archivedSessionIds.includes(target.sessionId),true)
+    assert.equal(ctx.sessionTitle.get(target.agent.session).title,'鲸鱼娘-废弃会话-1')
+    assert.equal(ctx.sessionTitle.get(replacement.agent.session).title,'鲸鱼娘')
+    await ctx.agentPresets.select(replacement.agent,'cordis')
+    await service.mainSession.ensure()
+    assert.equal(ctx.agentPresets.presetForSession(replacement.agent.session),'standard')
+    const titleSeq=replacement.agent.session.seq
+    await service.mainSession.ensure();await service.mainSession.ensure()
+    assert.equal(replacement.agent.session.seq,titleSeq)
+    assert.equal(replacement.agent.inbox.nextStep.filter(isAssistantContext).length,1)
+    assert.deepEqual(service.database.db.prepare('SELECT * FROM memory_records ORDER BY memory_id').all(),memoriesBefore)
+    assert.deepEqual(await channel.credentials(),credentialBefore)
+    assert.equal(channel.store.channel().cursor,receiveCursor)
+    assert.equal(channel.store.channel().session_id,replacement.sessionId)
+    await channel.reconcile(signal)
+    assert.equal(channel.store.channel().observed_seq,replacement.agent.session.seq-1)
+    assert.equal(projection.stateOf(replacement.agent.session).current,null)
+    assert.equal(projection.stateOf(replacement.agent.session).final,null)
+    const imported=service.database.db.prepare('SELECT h.* FROM history_messages h JOIN session_refs s USING(session_ref_id) WHERE s.external_id=?').all(target.sessionId)
+    assert.equal(imported.filter(row=>row.staged_text===users[0].data.content[0].text).length,1)
+    assert.equal(imported.some(row=>row.staged_text?.includes('For direct work on a persistent Task')),false)
     const snapshot={singleMainSession:true,ordinaryMemorySourcePreserved:true,ordinaryAssistantAuthority:false,roleCommandAbsent:true,sessionSelectionAbsent:true,nativeQuestion:true,nativeApproval:true,nativeApprovalScope:true,nativePersistenceFailureClosed:persistenceFailureClosed,ownerRequired:true,automaticOwnerVerification:true,idleContextReconciliation:true,singleContextMessage:true,nativeInputCount:users.length,wechatInputCount:1,finalReplyCount:sent.length,duplicateDelivery:false,contextRecorded:true,replyText:sent.map(row=>row.text)}
+    Object.assign(snapshot,{mainResetPreservesMemory:true,mainResetPreservesWechat:true,mainResetArchivesSource:true,mainResetStartsEmpty:true,mainNamesPinned:true,archiveNameNumbered:true,emptyMainPresetRecovered:true})
     assert.deepEqual(snapshot,JSON.parse(await readFile(new URL('./wechat-expected.json',import.meta.url),'utf8')))
     await writeFile(path.join(root,'wechat-behavior.json'),JSON.stringify(snapshot,null,2)+'\n')
     return snapshot

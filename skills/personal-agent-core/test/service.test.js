@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { resolveConfig } from '../lib/config.js'
 import { PersonalAgentService } from '../lib/service.js'
+import { ExecutionResults } from '../lib/execution-results.js'
 
 async function serviceFixture(overrides = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'personal-agent-service-test-'))
@@ -228,6 +229,62 @@ test('terminal Codex notification completes execution and releases write lease',
   } finally { await f.close() }
 })
 
+test('Codex terminal evidence supports explicit acceptance and replay preserves the verdict', async () => {
+  const f = await serviceFixture()
+  try {
+    const seeded = seedExecution(f.service, f.root, { mutatesWorkspace: true })
+    f.service.database.db.prepare('UPDATE tasks SET acceptance_json=? WHERE task_id=?')
+      .run(JSON.stringify(['Output matches the source', 'Source remains unchanged']), seeded.task.taskId)
+    f.service.results = new ExecutionResults(f.service, null)
+    const notification = { method: 'turn/completed', params: { threadId: 'thread-1', turn: {
+      id: 'turn-1', status: 'completed', items: [{ id: 'answer', type: 'agentMessage', text: '{"total":25}' }],
+    } } }
+    assert.equal(f.service.projectCodexNotification(notification), true)
+    await f.service.results.kick()
+    const notice = JSON.parse(f.service.database.db.prepare('SELECT result_json FROM execution_results WHERE execution_id=?')
+      .get(seeded.planned.executionId).result_json)
+    const detail = await f.service.operate({ action: 'get_task', taskId: seeded.task.taskId })
+    assert.deepEqual(detail.verification.criteria, [{ id: '0', text: 'Output matches the source' }, { id: '1', text: 'Source remains unchanged' }])
+    assert.deepEqual(detail.verification.evidenceIds, [notice.evidenceId])
+    assert.equal(detail.verification.results.length, 2)
+    assert.ok(detail.verification.results.every(row => row.state === 'pending' && row.evidenceIds[0] === notice.evidenceId))
+    const evidence = await f.service.operate({ action: 'memory_get', evidenceId: notice.evidenceId })
+    assert.match(evidence.content, /total/)
+    assert.equal(f.service.ledger.getTask(seeded.task.taskId).state, 'waiting')
+    assert.throws(() => f.service.ledger.transitionTask(seeded.task.taskId, 'completed', 'waiting'), /acceptance evidence/)
+    for (const criterion of detail.verification.criteria) await f.service.operate({ action: 'record_acceptance',
+      executionId: seeded.planned.executionId, criterionId: criterion.id, acceptanceState: 'passed',
+      evidenceIds: [notice.evidenceId], acceptanceSummary: 'Verified against the source and unchanged-file check' })
+    await f.service.operate({ action: 'transition_task', taskId: seeded.task.taskId, state: 'completed', expectedState: 'waiting' })
+    const count = f.service.database.db.prepare('SELECT COUNT(*) AS n FROM acceptance_results WHERE execution_id=?').get(seeded.planned.executionId).n
+    assert.equal(f.service.projectCodexNotification(notification), true)
+    await f.service.results.kick()
+    assert.equal(f.service.ledger.getTask(seeded.task.taskId).state, 'completed')
+    assert.equal(f.service.database.db.prepare('SELECT COUNT(*) AS n FROM acceptance_results WHERE execution_id=?').get(seeded.planned.executionId).n, count)
+    assert.ok(f.service.ledger.acceptanceStatus(seeded.task.taskId).results.every(row => row.state === 'passed'))
+    assert.equal(f.service.database.db.prepare("SELECT COUNT(*) AS n FROM evidence WHERE execution_id=? AND source_type='worker_terminal'").get(seeded.planned.executionId).n, 1)
+  } finally { await f.close() }
+})
+
+test('legacy Codex terminal evidence is discoverable without accepting historical message identifiers', async () => {
+  const f = await serviceFixture()
+  try {
+    const seeded = seedExecution(f.service, f.root)
+    f.service.ledger.transitionExecution(seeded.planned.executionId, 'succeeded')
+    const evidence = f.service.ledger.ingestSource({ sourceSystem: 'codex', sourceKind: 'worker_terminal',
+      sourceUri: 'codex://thread/thread-1', sourceLocator: 'turn:turn-1:terminal', sourceIdentity: 'legacy', text: '{"total":25}',
+      taskId: seeded.task.taskId, executionId: seeded.planned.executionId })
+    const detail = await f.service.operate({ action: 'get_task', taskId: seeded.task.taskId })
+    assert.deepEqual(detail.verification.results, [])
+    assert.deepEqual(detail.verification.evidenceIds, [evidence.evidenceId])
+    await assert.rejects(f.service.operate({ action: 'record_acceptance', executionId: seeded.planned.executionId,
+      acceptanceState: 'passed', evidenceIds: ['history-message-raw-source'] }), /Acceptance evidence does not exist/)
+    await f.service.operate({ action: 'record_acceptance', executionId: seeded.planned.executionId,
+      criterionId: detail.verification.criteria[0].id, acceptanceState: 'passed', evidenceIds: detail.verification.evidenceIds })
+    assert.equal(f.service.ledger.acceptanceStatus(seeded.task.taskId).results[0].state, 'passed')
+  } finally { await f.close() }
+})
+
 test('early turn notification heartbeats a pending execution and write lease', async () => {
   const f = await serviceFixture()
   try {
@@ -415,6 +472,7 @@ function installAdapter(service, handler) {
 }
 
 function enableExecution(service, ...flags) {
+  service.config={...service.config,defaultWorkerPriority:'codex'}
   service.flags.set('codex.daemon.connect', true, { actor: 'test' })
   for (const flag of flags) service.flags.set(flag, true, { actor: 'test' })
 }
@@ -426,11 +484,11 @@ test('execute creates a native task, controlled thread, and turn exactly once', 
   try {
     enableExecution(f.service, 'codex.new_thread.execute')
     const calls = installAdapter(f.service, async (method, params) => {
-      if (method === 'thread/start') return { thread: { id: 'thread-new', cwd: f.root } }
+      if (method === 'thread/start') return { cwd: f.root, runtimeWorkspaceRoots: [f.root], thread: { id: 'thread-new', cwd: f.root } }
       if (method === 'turn/start') return { thread: { id: params.threadId, cwd: f.root }, turn: { id: 'turn-new', status: 'inProgress' } }
       throw new Error(`Unexpected method: ${method}`)
     })
-    const request = { action: 'execute', requestId: 'new-1', objective: 'Implement the coordinator', workspacePath: f.root, mutatesWorkspace: false, forceNew: true, approvalPolicy: 'never', permissions: 'danger-full-access', sandboxPolicy: { type: 'dangerFullAccess' } }
+    const request = { action: 'execute', requestId: 'new-1', objective: 'Implement the coordinator', workspacePath: f.root, mutatesWorkspace: false, intent: 'new', approvalPolicy: 'never', permissions: 'danger-full-access', sandboxPolicy: { type: 'dangerFullAccess' } }
     const [result, concurrent] = await Promise.all([operatorOperate(f.service, request), operatorOperate(f.service, { ...request })])
     assert.equal(concurrent.routeDecisionId, result.routeDecisionId)
     assert.equal(result.decision.semanticAction, 'new_task')
@@ -457,12 +515,12 @@ test('Codex executions retain the current DSH interaction session', async () => 
   try {
     enableExecution(f.service, 'codex.new_thread.execute')
     installAdapter(f.service, async (method, params) => {
-      if (method === 'thread/start') return { thread: { id: 'thread-associated', cwd: f.root } }
+      if (method === 'thread/start') return { cwd: f.root, runtimeWorkspaceRoots: [f.root], thread: { id: 'thread-associated', cwd: f.root } }
       if (method === 'turn/start') return { thread: { id: params.threadId, cwd: f.root }, turn: { id: 'turn-associated', status: 'inProgress' } }
       throw new Error(`Unexpected method: ${method}`)
     })
-    const agent = { session: { id: 'dsh-interaction-session', header: { cwd: f.root } } }
-    const result = await f.service.executeObjective({ requestId: 'interaction-association', objective: 'Keep the caller session attached', workspacePath: f.root, forceNew: true }, { codexMutationAuthority: true, agent })
+    const agent = { session: { id: 'dsh-interaction-session', seq: 0, header: { cwd: f.root } } }
+    const result = await f.service.executeObjective({ requestId: 'interaction-association', objective: 'Keep the caller session attached', workspacePath: f.root, intent: 'new' }, { codexMutationAuthority: true, agent })
     const session = f.service.database.db.prepare("SELECT session_ref_id FROM session_refs WHERE system='dsh' AND external_id=?").get(agent.session.id)
     assert.ok(session)
     const trigger = f.service.database.db.prepare('SELECT source_session_ref_id FROM triggers WHERE trigger_id=?').get(result.triggerId)
@@ -482,7 +540,7 @@ test('DSH workers use an allowed preset and remain pending acceptance after succ
       result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'Worker completed the implementation' }] }),
       async dispose() { calls.push('dispose') },
     }
-    const agent = { id: 'assistant-agent', session: { id: 'dsh-worker-parent', header: { cwd: f.root } } }
+    const agent = { id: 'assistant-agent', session: { id: 'dsh-worker-parent', seq: 0, header: { cwd: f.root } } }
     f.service.context = { get(name) { return name === 'subagents' ? { startActivation: async spec => { calls.push(spec); return activation } } : null } }
     const result = await f.service.executeObjective({ worker: 'dsh_subagent', requestId: 'dsh-worker-1', objective: 'Implement the worker test', workspacePath: f.root, agentPreset: 'cordis' }, { agent })
     assert.equal(result.worker, 'dsh_subagent')
@@ -509,11 +567,11 @@ test('DSH fork workers inherit standard preset and reject independent presets', 
       result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'Fork completed' }] }),
       async dispose() {},
     }
-    const agent = { id: 'assistant-agent', session: { id: 'dsh-fork-parent', header: { cwd: f.root } } }
+    const agent = { id: 'assistant-agent', session: { id: 'dsh-fork-parent', seq: 0, header: { cwd: f.root } } }
     f.service.context = { get(name) {
       return name === 'subagents' ? { startActivation: async spec => { calls.push(spec); return activation } } : null
     } }
-    const result = await f.service.executeObjective({ worker: 'dsh_subagent', provider: 'fork', requestId: 'dsh-fork-standard', objective: 'Fork a standard worker', workspacePath: f.root, agentPreset: 'standard' }, { agent })
+    const result = await f.service.executeObjective({ provider: 'fork', requestId: 'dsh-fork-standard', objective: 'Fork a standard worker', workspacePath: f.root }, { agent })
     assert.equal(result.worker, 'dsh_subagent')
     assert.equal(Object.hasOwn(calls[0], 'agentPreset'), false)
     await assert.rejects(f.service.executeObjective({ worker: 'dsh_subagent', provider: 'fork', requestId: 'dsh-fork-cordis', objective: 'Reject a nonstandard fork', workspacePath: f.root, agentPreset: 'cordis' }, { agent }), error => error.code === 'DSH_FORK_PRESET_UNSUPPORTED')
@@ -531,7 +589,7 @@ test('worker capability reporting exposes DSH provider capabilities without addi
     const capabilities = f.service.workerCapabilities()
     assert.deepEqual(capabilities.dsh.providers.spawn, { available: true, inheritsParentContext: false, capabilities: providers.spawn.capabilities })
     assert.deepEqual(capabilities.dsh.providers.fork, { available: true, inheritsParentContext: true, capabilities: providers.fork.capabilities })
-    assert.equal(capabilities.codex.available, false)
+    assert.equal(capabilities.codex.available, true)
     assert.equal(Object.hasOwn(capabilities.codex, 'presets'), false)
     assert.equal(Object.hasOwn(capabilities.codex, 'providers'), false)
   } finally { await f.close() }
@@ -540,7 +598,7 @@ test('worker capability reporting exposes DSH provider capabilities without addi
 test('internal execution records a real begin/finish lifecycle, pending acceptance, and DSH interaction', async () => {
   const f = await serviceFixture()
   try {
-    const agent = { session: { id: 'dsh-internal-session', header: { cwd: f.root } } }
+    const agent = { session: { id: 'dsh-internal-session', seq: 0, header: { cwd: f.root } } }
     const result = await f.service.executeObjective({ worker: 'internal', mutatesWorkspace: false, requestId: 'internal-result', objective: 'Record a direct result' }, { agent })
     assert.equal(result.executionState, 'running')
     const running = f.service.database.db.prepare('SELECT executor_kind,execution_state,worker_policy_json FROM executions WHERE execution_id=?').get(result.executionId)
@@ -560,7 +618,7 @@ test('internal execution records a real begin/finish lifecycle, pending acceptan
 test('internal mutating execution captures and releases its workspace lease', async () => {
   const f = await serviceFixture()
   try {
-    const agent = { session: { id: 'dsh-internal-mutating-session', header: { cwd: f.root } } }
+    const agent = { session: { id: 'dsh-internal-mutating-session', seq: 0, header: { cwd: f.root } } }
     await assert.rejects(f.service.executeObjective({ worker: 'internal', requestId: 'internal-no-path', objective: 'Reject mutation without a path', mutatesWorkspace: true }, { agent }), /requires workspacePath/)
     const result = await f.service.executeObjective({ worker: 'internal', requestId: 'internal-mutating', objective: 'Record a workspace mutation', workspacePath: f.root, mutatesWorkspace: true }, { agent, callerWorkspaceRoot: f.root })
     recordWork(f.service, agent)
@@ -574,7 +632,7 @@ test('internal mutating execution captures and releases its workspace lease', as
 
 test('service disposal reconciles admitted internal work before closing the ledger', async t => {
   const f = await serviceFixture()
-  const agent = { session: { id: 'dsh-internal-disposal', header: { cwd: f.root } } }
+  const agent = { session: { id: 'dsh-internal-disposal', seq: 0, header: { cwd: f.root } } }
   try {
     const begun = await f.service.executeObjective({ worker: 'internal', requestId: 'internal-disposal', objective: 'Hold a workspace mutation', workspacePath: f.root, mutatesWorkspace: true }, { agent, callerWorkspaceRoot: f.root })
     let observed = null
@@ -596,10 +654,10 @@ test('service disposal reconciles admitted internal work before closing the ledg
 test('DSH planning failure releases a captured mutation lease', async t => {
   const f = await serviceFixture()
   try {
-    const agent = { session: { id: 'dsh-plan-failure', header: { cwd: f.root } } }
+    const agent = { session: { id: 'dsh-plan-failure', seq: 0, header: { cwd: f.root } } }
     f.service.context = { get(name) { return name === 'subagents' ? { startActivation() { assert.fail('activation must not start') } } : null } }
     t.mock.method(f.service.ledger, 'planExecution', () => { throw new Error('planned failure') })
-    await assert.rejects(f.service.executeObjective({ worker: 'dsh_subagent', requestId: 'dsh-plan-failure', objective: 'Capture then fail planning', workspacePath: f.root, mutatesWorkspace: true }, { agent, callerWorkspaceRoot: f.root }), /planned failure/)
+    await assert.rejects(f.service.executeObjective({ requestId: 'dsh-plan-failure', objective: 'Capture then fail planning', workspacePath: f.root, mutatesWorkspace: true }, { agent, callerWorkspaceRoot: f.root }), /planned failure/)
     assert.equal(f.service.database.db.prepare('SELECT lease_state FROM leases ORDER BY acquired_at DESC LIMIT 1').get().lease_state, 'released')
   } finally { await f.close() }
 })
@@ -612,8 +670,8 @@ test('DSH mutation lease remains active until activation disposal settles', asyn
   try {
     const activation = { childId: 'dsh-lease-order', result: result.promise, dispose: () => disposed.promise }
     f.service.context = { get(name) { return name === 'subagents' ? { async startActivation() { published.resolve(); return activation } } : null } }
-    const agent = { session: { id: 'dsh-lease-parent', header: { cwd: f.root } } }
-    const execution = f.service.executeObjective({ worker: 'dsh_subagent', requestId: 'dsh-lease-order', objective: 'Mutate with an owned lease', workspacePath: f.root, mutatesWorkspace: true }, { agent, callerWorkspaceRoot: f.root })
+    const agent = { session: { id: 'dsh-lease-parent', seq: 0, header: { cwd: f.root } } }
+    const execution = f.service.executeObjective({ requestId: 'dsh-lease-order', objective: 'Mutate with an owned lease', workspacePath: f.root, mutatesWorkspace: true }, { agent, callerWorkspaceRoot: f.root })
     await published.promise
     result.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'done' }] })
     await Promise.resolve()
@@ -635,9 +693,9 @@ test('parent cancellation disposes a published DSH activation and releases its l
       published.resolve()
       return { childId: 'dsh-parent-cancel', result, async dispose() { disposeCalls += 1 } }
     } } : null } }
-    const agent = { session: { id: 'dsh-parent-cancel-session', header: { cwd: f.root } } }
+    const agent = { session: { id: 'dsh-parent-cancel-session', seq: 0, header: { cwd: f.root } } }
     const controller = new AbortController()
-    const execution = f.service.executeObjective({ worker: 'dsh_subagent', requestId: 'dsh-parent-cancel', objective: 'Cancel this worker', workspacePath: f.root, mutatesWorkspace: true }, { agent, callerWorkspaceRoot: f.root, signal: controller.signal })
+    const execution = f.service.executeObjective({ requestId: 'dsh-parent-cancel', objective: 'Cancel this worker', workspacePath: f.root, mutatesWorkspace: true }, { agent, callerWorkspaceRoot: f.root, signal: controller.signal })
     await published.promise
     controller.abort(new DOMException('cancelled', 'AbortError'))
     await assert.rejects(execution, { name: 'AbortError' })
@@ -664,14 +722,15 @@ test('execute resumes an owned durable thread before starting its turn', async (
     const calls = installAdapter(f.service, async (method, params) => {
       if (method === 'thread/loaded/list') return { data: [] }
       if (method === 'thread/read') return { thread: { id: params.threadId, turns: [] } }
-      if (method === 'thread/resume') return { thread: { id: params.threadId, cwd: f.root } }
+      if (method === 'thread/resume') return { cwd: f.root, runtimeWorkspaceRoots: [f.root], thread: { id: params.threadId, cwd: f.root } }
       if (method === 'turn/start') return { thread: { id: params.threadId }, turn: { id: 'turn-resumed', status: 'inProgress' } }
       throw new Error(`Unexpected method: ${method}`)
     })
     const result = await operatorOperate(f.service, { action: 'execute', requestId: 'resume-1', taskId: task.taskId, objective: task.objective, workspacePath: f.root, mutatesWorkspace: false })
     assert.equal(result.decision.semanticAction, 'resume_task')
     assert.equal(result.decision.deliveryAction, 'resume_thread')
-    assert.deepEqual(calls.map(call => call.method), ['thread/loaded/list','thread/read','thread/resume','turn/start'])
+    JSON.stringify(result, (key, value) => { assert.notEqual(value, undefined, `Tool result field ${key} must survive JSON serialization`); return value })
+    assert.deepEqual(calls.map(call => call.method), ['thread/read','thread/read','thread/resume','turn/start'])
     assert.equal(result.executions.length, 2)
   } finally { await f.close() }
 })
@@ -689,18 +748,19 @@ test('execute forks completed work only from its recorded completed turn', async
     const calls = installAdapter(f.service, async (method, params) => {
       if (method === 'thread/loaded/list') return { data: [] }
       if (method === 'thread/read') return { thread: { id: params.threadId, turns: [{ id: 'turn-1', status: 'completed' }] } }
+      if (method === 'thread/resume') return { cwd: f.root, runtimeWorkspaceRoots: [f.root], thread: { id: params.threadId, cwd: f.root } }
       if (method === 'thread/fork') {
         assert.equal(params.lastTurnId, 'turn-1')
-        return { thread: { id: 'thread-forked', cwd: f.root } }
+        return { cwd: f.root, runtimeWorkspaceRoots: [f.root], thread: { id: 'thread-forked', cwd: f.root } }
       }
       if (method === 'turn/start') return { thread: { id: params.threadId }, turn: { id: 'turn-forked', status: 'inProgress' } }
       throw new Error(`Unexpected method: ${method}`)
     })
-    const result = await operatorOperate(f.service, { action: 'execute', requestId: 'fork-1', taskId: seeded.task.taskId, objective: 'Try an independent alternative', workspacePath: f.root, mutatesWorkspace: false })
+    const result = await operatorOperate(f.service, { action: 'execute', requestId: 'fork-1', sessionAction:'fork', taskId: seeded.task.taskId, objective: 'Try an independent alternative', workspacePath: f.root, mutatesWorkspace: false })
     assert.equal(result.decision.semanticAction, 'fork_task')
     assert.equal(result.decision.deliveryAction, 'fork_thread')
     assert.equal(f.service.ledger.getTask(result.taskId).parentTaskId, seeded.task.taskId)
-    assert.deepEqual(calls.map(call => call.method), ['thread/loaded/list','thread/read','thread/fork','turn/start'])
+    assert.deepEqual(calls.map(call => call.method), ['thread/read','thread/read','thread/resume','thread/fork','turn/start'])
   } finally { await f.close() }
 })
 
@@ -714,7 +774,7 @@ test('execute steers only an active turn owned by the current adapter epoch and 
     f.service.ledger.attachTaskSession(seeded.task.taskId, thread.session_ref_id, { relation: 'executor', confidence: 1 })
     const calls = installAdapter(f.service, async (method, params) => {
       if (method === 'thread/loaded/list') return { data: [{ id: 'thread-1' }] }
-      if (method === 'thread/read') return { thread: { id: params.threadId, turns: [{ id: 'turn-1', status: 'inProgress' }] } }
+      if (method === 'thread/read') return { thread: { id: params.threadId, cwd: path.join(f.root,'old-header-directory'), turns: [{ id: 'turn-1', status: 'inProgress' }] } }
       if (method === 'turn/steer') {
         assert.equal(params.expectedTurnId, 'turn-1')
         return { turnId: 'turn-1' }
@@ -724,7 +784,7 @@ test('execute steers only an active turn owned by the current adapter epoch and 
     f.service.threadEpochs.set('thread-1', f.service.adapter.connectionEpoch)
     const result = await operatorOperate(f.service, { action: 'execute', requestId: 'steer-1', taskId: seeded.task.taskId, objective: 'Correct the current implementation', workspacePath: f.root, mutatesWorkspace: false, kind: 'correction' })
     assert.equal(result.decision.deliveryAction, 'steer_turn')
-    assert.deepEqual(calls.map(call => call.method), ['thread/loaded/list','thread/read','turn/steer'])
+    assert.deepEqual(calls.map(call => call.method), ['thread/read','thread/read','turn/steer'])
     assert.equal(f.service.database.db.prepare('SELECT execution_state FROM executions WHERE execution_id=?').get(result.executions[0].executionId).execution_state, 'succeeded')
   } finally { await f.close() }
 })
@@ -736,7 +796,7 @@ test('assistant authority cannot enable features, decide approvals, or dispatch 
     installAdapter(f.service, async method => { throw new Error(`Restricted assistant dispatched ${method}`) })
     await assert.rejects(f.service.operate({ action: 'set_feature', key: 'routing.resume', enabled: true }), /authenticated operator/)
     await assert.rejects(f.service.operate({ action: 'decide_approval', approvalId: 'missing', decision: 'approved' }), /authenticated operator/)
-    const result = await f.service.operate({ action: 'execute', requestId: 'restricted-1', objective: 'Do not dispatch', workspacePath: f.root, forceNew: true }, { callerWorkspaceRoot: f.root })
+    const result = await f.service.operate({ action: 'execute', requestId: 'restricted-1', objective: 'Do not dispatch', workspacePath: f.root, intent: 'new' }, { callerWorkspaceRoot: f.root })
     assert.equal(result.decision.deliveryAction, 'wait')
     assert.deepEqual(result.decision.reasonCodes, ['NEW_THREAD_FLAG_DISABLED'])
   } finally { await f.close() }
@@ -749,7 +809,7 @@ test('assistant execution cannot escape its trusted caller workspace', async () 
     const child = path.join(f.root, 'child')
     mkdirSync(child)
     await assert.rejects(
-      f.service.operate({ action: 'execute', requestId: 'caller-scope-1', objective: 'Do not escape', workspacePath: f.root, forceNew: true }, { callerWorkspaceRoot: child }),
+      f.service.operate({ action: 'execute', requestId: 'caller-scope-1', objective: 'Do not escape', workspacePath: f.root, intent: 'new' }, { callerWorkspaceRoot: child }),
       /outside the caller workspace/,
     )
   } finally { await f.close() }
@@ -766,7 +826,7 @@ test('operator cannot enable queue or dispatch queue methods', async () => {
 test('execute persists a waiting route without touching Codex when mutation flags are disabled', async () => {
   const f = await serviceFixture()
   try {
-    await assert.rejects(f.service.operate({ action: 'execute', requestId: 'disabled-1', objective: 'Do not dispatch', workspacePath: f.root, mutatesWorkspace: false, forceNew: true }, { callerWorkspaceRoot: f.root }), /No enabled worker/)
+    await assert.rejects(f.service.operate({ action: 'execute', requestId: 'disabled-1', objective: 'Do not dispatch', workspacePath: f.root, mutatesWorkspace: false, intent: 'new' }, { callerWorkspaceRoot: f.root }), /所选 worker/)
     assert.equal(f.service.database.db.prepare('SELECT COUNT(*) AS n FROM executions').get().n, 0)
   } finally { await f.close() }
 })
@@ -781,13 +841,14 @@ test('steer waits without the exact active workspace lease authority', async () 
     f.service.ledger.attachTaskSession(seeded.task.taskId, thread.session_ref_id, { relation: 'executor', confidence: 1 })
     const calls = installAdapter(f.service, async (method, params) => {
       if (method === 'thread/loaded/list') return { data: [{ id: 'thread-1' }] }
-      if (method === 'thread/read') return { thread: { id: params.threadId, turns: [{ id: 'turn-1', status: 'inProgress' }] } }
+      if (method === 'thread/read') return { thread: { id: params.threadId, cwd: path.join(f.root,'old-header-directory'), turns: [{ id: 'turn-1', status: 'inProgress' }] } }
       throw new Error(`Unexpected method: ${method}`)
     })
     f.service.threadEpochs.set('thread-1', f.service.adapter.connectionEpoch)
     const result = await operatorOperate(f.service, { action: 'execute', requestId: 'steer-no-lease-1', taskId: seeded.task.taskId, objective: 'Correct the current implementation', workspacePath: f.root, kind: 'correction' })
-    assert.equal(result.decision.deliveryAction, 'wait')
-    assert.deepEqual(calls.map(call => call.method), ['thread/loaded/list','thread/read'])
+    assert.equal(result.code, 'EXECUTION_SESSION_BUSY')
+    assert.equal(result.waiting, true)
+    assert.deepEqual(calls.map(call => call.method), ['thread/read'])
   } finally { await f.close() }
 })
 
@@ -911,7 +972,7 @@ test('Codex execution rejects workspaces outside the configured allowlist', asyn
   try {
     enableExecution(f.service, 'codex.new_thread.execute')
     await assert.rejects(
-      operatorOperate(f.service, { action: 'execute', requestId: 'outside-1', objective: 'Touch another directory', workspacePath: outside, forceNew: true }),
+      operatorOperate(f.service, { action: 'execute', requestId: 'outside-1', objective: 'Touch another directory', workspacePath: outside, intent: 'new' }),
       /outside the configured Codex workspace allowlist/,
     )
     assert.equal(f.service.database.db.prepare('SELECT COUNT(*) AS count FROM executions').get().count, 0)

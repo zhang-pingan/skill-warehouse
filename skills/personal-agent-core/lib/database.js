@@ -54,11 +54,11 @@ export class LedgerDatabase {
   ensureSchema() {
     const schema = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8')
     const version = this.db.prepare('PRAGMA user_version').get().user_version
-    if (this.hasTable('evidence') && ![1, 2].includes(version)) throw new Error('Memory schema requires explicit initialization before installing this version')
+    if (this.hasTable('evidence') && ![1, 2, 3].includes(version)) throw new Error('Memory schema requires explicit initialization before installing this version')
     this.transaction(() => {
       this.db.exec(schema)
       this.db.exec(readFileSync(new URL('./wechat-schema.sql', import.meta.url), 'utf8'))
-      this.db.exec('PRAGMA user_version=2')
+      this.db.exec('PRAGMA user_version=3')
     })
   }
 
@@ -220,7 +220,7 @@ export class LedgerDatabase {
       const rows = restored.prepare('PRAGMA integrity_check').all()
       const integrityOk = rows.length === 1 && rows[0].integrity_check === 'ok'
       if (!integrityOk) throw new Error(`Backup integrity check failed: ${JSON.stringify(rows)}`)
-      if (![1, 2].includes(restored.prepare('PRAGMA user_version').get().user_version)) throw new Error('Backup uses an unsupported memory schema')
+      if (![1, 2, 3].includes(restored.prepare('PRAGMA user_version').get().user_version)) throw new Error('Backup uses an unsupported memory schema')
       for (const row of restored.prepare('SELECT content_hash,byte_size,compressed FROM source_blobs WHERE content IS NULL').all()) {
         const body=gunzipSync(row.compressed,{maxOutputLength:this.config.maxHistoryRecordBytes})
         if(body.length!==row.byte_size||sha256(body)!==row.content_hash)throw new Error('Backup archive verification failed')
@@ -245,7 +245,7 @@ export class LedgerDatabase {
         restored.exec(readFileSync(new URL('./wechat-schema.sql', import.meta.url), 'utf8'))
         restored.prepare('INSERT OR IGNORE INTO wechat_channel(singleton,updated_at) VALUES(1,?)').run(nowIso(this.clock))
         restored.prepare('UPDATE wechat_channel SET restore_hold=1 WHERE singleton=1').run()
-        restored.exec('PRAGMA user_version=2; PRAGMA wal_checkpoint(TRUNCATE);')
+        restored.exec('PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);')
       } finally { restored.close() }
       const manifest = {
         databaseFile: path.basename(target),

@@ -311,5 +311,18 @@
   "wechatSendBudgetHint": "Consecutive messages allowed after receiving a WeChat message, subject to server limits.",
   "wechatBackoffMaxMsHint": "Maximum delay between reconnection attempts after failures.",
   "wechatInteractionTtlMsHint": "Time allowed to answer a WeChat question or approval before it expires.",
-  "jobsHint": "Review scheduled jobs, upcoming runs, and recent errors."
+  "jobsHint": "Review scheduled jobs, upcoming runs, and recent errors.",
+  "mainSessionGroup": "Main conversation",
+  "mainSessionGroupHint": "Manage the conversation shared by desktop and WeChat, with memories kept separately",
+  "mainSessionClear": "Clear main conversation history",
+  "mainSessionClearHint": "Sync messages, archive the old conversation and start an empty one. Memories, tasks, settings and WeChat login are kept. Pending messages, replies and approvals stay with the old conversation.",
+  "mainSessionClearConfirm": "Clear the current main conversation and start a new one?\n\nThe old conversation is synced to memory and archived. Existing memories, tasks and settings are kept. WeChat stays signed in and switches to the new main conversation. Pending messages, replies and approvals stay with the old conversation.\n\nA running conversation cannot be cleared.",
+  "mainSessionClearing": "Clearing main conversation…",
+  "mainSessionClearDraining": "Pausing WeChat delivery and checking conversation activity…",
+  "mainSessionClearSyncing": "Syncing messages from the old conversation…",
+  "mainSessionClearCreating": "Creating the main conversation and updating WeChat…",
+  "mainSessionCleared": "An empty main conversation is ready. The old conversation is archived; memories, tasks and WeChat login are kept.",
+  "mainSessionTitle": "Conversation name",
+  "mainSessionTitleHint": "Changes apply automatically. Archived conversations use “name-废弃会话-1, 2, 3…” with consecutive numbers.",
+  "mainSessionTitleError": "Enter a name of up to 48 UTF-8 bytes (about 16 Chinese characters)."
 }

@@ -4,7 +4,6 @@
       config:
         historyRead: true
         taskNative: true
-        codexConnect: false
-        codexMutations: false
+        codexWorkerEnabled: false
         allowedWorkspaceRoots:
           - /Users/chelaile/Documents/deepseek-harness/default-workspace

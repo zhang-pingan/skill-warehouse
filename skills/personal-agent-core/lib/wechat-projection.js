@@ -4,14 +4,14 @@ import { z } from 'zod'
 const turn = z.object({ turn: z.number(), requestIds: z.array(z.string()), unidentifiedUserInput: z.boolean(), calls: z.array(z.object({ id: z.string(), name: z.string(), arguments: z.string() })), messageSeq: z.number(), text: z.string() })
 export const wechatProjection = {
   key: 'personalAgentWechat',
-  stateVersion: 3,
-  stateSchema: z.object({ contextLoaded: z.boolean(), current: turn.nullable(), final: turn.extend({ seq: z.number(), reason: z.string() }).nullable() }),
-  init: () => ({ contextLoaded: false, current: null, final: null }),
+  stateVersion: 4,
+  stateSchema: z.object({ contextLoaded: z.boolean(), contextVersion:z.number(), current: turn.nullable(), final: turn.extend({ seq: z.number(), reason: z.string() }).nullable() }),
+  init: () => ({ contextLoaded: false, contextVersion:0, current: null, final: null }),
   apply(state, event) {
     if (event.type === 'turn/start') return { ...state, current: { turn: event.data.turn, requestIds: [], unidentifiedUserInput: false, calls: [], messageSeq: -1, text: '' }, final: null }
     if (event.type === 'user/message') {
       const source = event.data.source
-      if (source.kind === 'agent-instructions' && source.changes?.some(change => change.path === 'personal-assistant' && change.action === 'add')) return state.contextLoaded ? state : { ...state, contextLoaded: true }
+      if (source.kind === 'agent-instructions' && source.changes?.some(change => (change.path === 'personal-assistant' || change.path.startsWith('personal-assistant/v')) && change.action === 'add')) { const recorded=source.changes.find(change=>change.path==='personal-assistant'||change.path.startsWith('personal-assistant/v')); const version=Number(recorded.path.split('/v')[1]??1); return state.contextVersion===version ? state : {...state,contextLoaded:true,contextVersion:version} }
       if (event.surfaceOp === 'append' && source.kind === 'user' && state.current) {
         return { ...state, current: { ...state.current, unidentifiedUserInput: state.current.unidentifiedUserInput || !source.rpcId, requestIds: source.rpcId ? [...new Set([...state.current.requestIds, source.rpcId])] : state.current.requestIds } }
       }

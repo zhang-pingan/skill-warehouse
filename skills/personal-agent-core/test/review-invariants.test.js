@@ -88,18 +88,18 @@ test('mixed temporary conversation fragments preserve project facts without reca
 })
 
 test('backend, DSH preset and model rules resolve independently and preserve Codex fields', () => {
-  const f = fixture({ modelPolicies: { code: { worker: 'codex', model: 'configured-model', effort: 'high' } }, workerRules: [
+  const f = fixture({ codexWorkerEnabled:true, modelPolicies: { code: { worker: 'codex', model: 'configured-model', effort: 'high' } }, workerRules: [
     { id: 'plugin', keywords: ['plugin'], capabilities: [], worker: 'dsh_subagent', agentPreset: 'cordis' },
     { id: 'code', keywords: [], capabilities: [], worker: 'codex', modelPolicy: 'code' },
   ] })
   try {
     const available = { codex: true, dsh_subagent: true }
-    assert.equal(resolveWorkerPolicy(f.config, { objective: 'Build a plugin' }, available).agentPreset, 'cordis')
+    assert.equal(resolveWorkerPolicy(f.config, { objective: 'Build a plugin', worker:'dsh_subagent',agentPreset:'cordis' }, available).agentPreset, 'cordis')
     const codex = resolveWorkerPolicy(f.config, { objective: 'Implement parser' }, available)
     assert.equal(codex.worker, 'codex')
     assert.equal(codex.model.model, 'configured-model')
     assert.equal(Object.hasOwn(codex, 'agentPreset'), false)
-    assert.throws(() => resolveWorkerPolicy(f.config, { objective: 'Implement parser', worker: 'codex', agentPreset: 'standard' }, available), /only valid for a DSH/)
+    assert.throws(() => resolveWorkerPolicy(f.config, { objective: 'Implement parser', worker: 'codex', agentPreset: 'standard' }, available), /新建 worker/)
   } finally { f.close() }
 })
 
@@ -178,7 +178,9 @@ test('request identity rejects changed acceptance or preset and survives a compl
     assert.equal(again.executionId,first.executionId)
     assert.equal(again.repeated,true)
     await assert.rejects(service.executeObjective({...request,acceptance:['Different']},{agent}),/already bound/)
-    await assert.rejects(service.executeObjective({...request,requestId:'second-id'},{agent}),/current internal execution/)
+    const blocked=await service.executeObjective({...request,requestId:'second-id'},{agent})
+    assert.equal(blocked.code,'EXECUTION_SESSION_BUSY')
+    assert.equal(blocked.waiting,true)
     assert.equal(service.database.db.prepare('SELECT COUNT(*) AS n FROM executions').get().n,1)
   }finally{await service.dispose();f.close()}
 })
@@ -215,6 +217,9 @@ test('background jobs expose failures, join overlapping ticks, and preserve hist
     assert.match(jobs.state('history').lastError,/unreadable/)
     now+=1000
     await jobs.run('history',async()=>({imported:2}))
+    await assert.rejects(jobs.run('invalid-rejection',()=>Promise.reject(null)), value => value === null)
+    assert.equal(jobs.state('invalid-rejection').running,false)
+    assert.equal(jobs.state('invalid-rejection').lastError,'null')
     const restarted=new BackgroundJobs(f.database.db,()=>now)
     assert.equal(restarted.state('history').lastError,null)
     assert.equal(restarted.state('history').lastSuccessfulAt,new Date(now).toISOString())
@@ -229,15 +234,18 @@ test('Cordis validated configuration remains valid when apply resolves it again'
 })
 
 
-test('a projectless durable goal can continue across Sessions without merging another project', async () => {
+test('cross-project candidates require clarification before an explicit task continues', async () => {
   const f=fixture({semanticRoutingEnabled:false});const service=new PersonalAgentService(f.config);await service.initialize()
   try{
     const first=await service.executeObjective({worker:'internal',objective:'Prepare the same durable report',mutatesWorkspace:false,requestId:'first'},{agent:{session:{id:'first-session',seq:0}}})
     const project=service.ledger.upsertProject({canonicalPath:f.root})
     service.ledger.createTask({objective:'Prepare the same durable report',projectId:project.projectId,acceptance:['Verify result']})
     const continued=await service.executeObjective({worker:'internal',objective:'Prepare the same durable report',mutatesWorkspace:false,requestId:'continued'},{agent:{session:{id:'second-session',seq:0}}})
-    assert.equal(continued.taskId,first.taskId)
-    assert.deepEqual(service.buildCandidates({objective:'Prepare the same durable report'}).map(row=>row.taskId),[first.taskId])
+    assert.equal(continued.clarificationRequired,true)
+    assert.equal(service.buildCandidates({objective:'Prepare the same durable report'}).length,2)
+    service.ledger.transitionExecution(first.executionId,'succeeded',{expectedState:'running'})
+    const explicit=await service.executeObjective({worker:'internal',taskId:first.taskId,objective:'Prepare the same durable report',mutatesWorkspace:false,requestId:'explicit'},{agent:{session:{id:'second-session',seq:0}}})
+    assert.equal(explicit.taskId,first.taskId)
     const other=await service.executeObjective({worker:'internal',objective:'Repair independent notification failure',mutatesWorkspace:false,requestId:'other'},{agent:{session:{id:'third-session',seq:0}}})
     assert.notEqual(other.taskId,first.taskId)
   }finally{await service.dispose();f.close()}

@@ -576,3 +576,37 @@ CREATE TABLE IF NOT EXISTS history_exclusions (
   message_id TEXT PRIMARY KEY,
   deleted_at TEXT NOT NULL
 ) STRICT;
+
+-- Execution-source links survive historical task re-extraction and do not grant native control authority.
+CREATE TABLE IF NOT EXISTS task_sources (
+  source_key TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  session_ref_id TEXT NOT NULL REFERENCES session_refs(session_ref_id),
+  session_task_id TEXT,
+  context_version TEXT,
+  messages_json TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS task_sources_task ON task_sources(task_id);
+CREATE TABLE IF NOT EXISTS execution_results (
+  execution_id TEXT PRIMARY KEY REFERENCES executions(execution_id),
+  result_json TEXT NOT NULL,
+  delivery_state TEXT NOT NULL CHECK(delivery_state IN ('pending','delivering','delivered','unknown')),
+  target_session_id TEXT,
+  target_version INTEGER,
+  request_id TEXT NOT NULL,
+  delivered_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS dsh_execution_runs (
+  execution_id TEXT PRIMARY KEY REFERENCES executions(execution_id),
+  session_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  message_id TEXT,
+  start_seq INTEGER NOT NULL,
+  terminal_json TEXT,
+  parent_session_id TEXT,
+  parent_start_seq INTEGER,
+  mode TEXT NOT NULL
+) STRICT;

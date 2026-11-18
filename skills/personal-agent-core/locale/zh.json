@@ -311,5 +311,18 @@
   "wechatSendBudgetHint": "每次收到微信消息后允许连续发送的条数，仍受服务端限制",
   "wechatBackoffMaxMsHint": "连接失败后逐渐延长重试间隔，此值限制最长等待时间",
   "wechatInteractionTtlMsHint": "微信问题或审批等待答复的时间，过期后不能继续确认",
-  "jobsHint": "查看定时任务的执行情况、下次运行时间和最近错误"
+  "jobsHint": "查看定时任务的执行情况、下次运行时间和最近错误",
+  "mainSessionGroup": "主会话",
+  "mainSessionGroupHint": "管理桌面与微信共用的唯一对话，记忆系统独立保留",
+  "mainSessionClear": "清空主会话历史",
+  "mainSessionClearHint": "同步有效对话、归档旧会话并新建空会话。保留记忆、任务、设置和微信登录；旧会话的待处理消息、回复和审批不会转入新会话。",
+  "mainSessionClearConfirm": "清空当前主会话历史并开始新对话？\n\n旧会话的有效对话会同步到记忆系统，原会话归档保留。已有记忆、任务和设置不会删除；微信保持登录并自动切换到新主会话。旧会话的待处理消息、回复和审批不会转入新会话。\n\n主会话运行期间无法清空。",
+  "mainSessionClearing": "正在清理主会话…",
+  "mainSessionClearDraining": "正在暂停微信收发并检查会话状态…",
+  "mainSessionClearSyncing": "正在同步旧会话的有效对话…",
+  "mainSessionClearCreating": "正在创建新主会话并更新微信关联…",
+  "mainSessionCleared": "已创建空白主会话，旧会话已归档；记忆、任务和微信登录已保留",
+  "mainSessionTitle": "主会话名称",
+  "mainSessionTitleHint": "修改后自动生效；清空时按“名称-废弃会话-1、2、3…”命名旧会话，编号连续递增",
+  "mainSessionTitleError": "名称不能为空，最多 48 字节（约 16 个汉字）"
 }

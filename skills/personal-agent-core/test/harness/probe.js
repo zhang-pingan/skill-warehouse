@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { runFlowProbe } from './flow-probe.js'
 import { runWechatProbe } from './wechat-probe.js'
 import { PersonalAgentService } from '../../lib/service.js'
 import { resolveConfig } from '../../lib/config.js'
@@ -30,6 +31,7 @@ class FixtureAdapter extends LlmAdapter {
       const input = JSON.parse(analysisPrompt.split('Return only the requested JSON.\n').at(-1))
       if(input.messages)text=JSON.stringify({tasks:[{id:input.tasks[0]?.id??'new:tutor',title:'高中数学陪练',goal:'高中数学陪练',summary:'逐题讲解，结果尚未验证',state:'open'}],assignments:input.messages.map(message=>({messageId:message.messageId,taskIds:[input.tasks[0]?.id??'new:tutor'],status:'assigned'}))})
       else if(input.tasks)text=JSON.stringify({merges:[]})
+      else if(input.candidates)text=JSON.stringify({candidates:input.candidates.map(candidate=>({candidateId:candidate.candidateId,compatible:candidate.objective===input.objective,confidence:candidate.objective===input.objective?1:0,reason:'Fixture objective comparison'}))})
       if (input.messages?.some(message => message.text === 'Reconciliation repair fixture')) text = JSON.stringify({
         tasks: [{ id: 'new:duplicate', title: 'Reconciliation duplicate', goal: 'Continue the existing task', summary: 'Continuation', state: 'open' }],
         assignments: input.messages.map(message => ({ messageId: message.messageId, taskIds: ['new:duplicate'], status: 'assigned' })),
@@ -68,12 +70,14 @@ class FixtureAdapter extends LlmAdapter {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
-export const inject = ['webServer','connection','llm','sessionController','sessionPersistence','workingDirectory','agentPresets','agentDefaultModel','subagents','workspaceRegistry','agents','tools','commands','workspaceController','sessionProjections','credentials','userQuestions','approval']
-export function apply(ctx) {
+export const inject = ['webServer','connection','llm','sessionController','sessionPersistence','sessionTitle','workingDirectory','agentPresets','agentDefaultModel','subagents','workspaceRegistry','agents','tools','commands','workspaceController','sessionProjections','sessionQuery','credentials','userQuestions','approval']
+export async function apply(ctx) {
   const reviewRoot = process.env.DSH_REVIEW_ROOT
   if (!reviewRoot || !process.env.DSH_HOME || path.resolve(process.env.DSH_HOME) !== path.join(path.resolve(reviewRoot), 'harness-home')) {
     throw new Error('The Harness probe requires DSH_HOME=$DSH_REVIEW_ROOT/harness-home to isolate sessions and settings')
   }
+  // Match desktop first-use setup before probes create any native Sessions.
+  await ctx.workspaceController.initializeDefault(new AbortController().signal)
   ctx.effect(() => ctx.llm.registerAdapter(['personal-agent-smoke'], new FixtureAdapter()))
   ctx.effect(() => ctx.webServer.register({kind:'exact',path:'/api/personal-agent-review-hold',handler:async(req,res)=>{
     const rejection=ctx.connection.requestRejection(req)
@@ -83,6 +87,12 @@ export function apply(ctx) {
     res.end(JSON.stringify({held:!!heldAnalysis}))
   }}))
   ctx.effect(() => () => {heldAnalysis?.resolve();heldAnalysis=null})
+  ctx.effect(() => ctx.webServer.register({kind:'exact',path:'/api/personal-agent-flow-probe',handler:async(req,res)=>{
+    const rejection=ctx.connection.requestRejection(req)
+    if(rejection!==undefined){res.statusCode=rejection;res.end();return}
+    try{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(await runFlowProbe(ctx,reviewRoot)))}
+    catch(error){res.statusCode=500;res.end(JSON.stringify({error:error.stack}))}
+  }}))
   ctx.effect(() => ctx.webServer.register({kind:'exact',path:'/api/personal-agent-wechat-probe',handler:async(req,res)=>{
     const rejection=ctx.connection.requestRejection(req)
     if(rejection!==undefined){res.statusCode=rejection;res.end();return}
@@ -238,14 +248,15 @@ export function apply(ctx) {
       if ('error' in resolved) throw new Error(JSON.stringify(resolved.error))
       const agent = resolved.agent
       agent.model.select(selection)
-      const internal = await service.executeObjective({worker:'internal',objective:'Record actual Harness result',mutatesWorkspace:false,acceptance:['Observe fixture output'],requestId:'real-internal'},{agent})
+      const internal = await service.executeObjective({worker:'internal',objective:'Record actual Harness result',intent:'new',mutatesWorkspace:false,acceptance:['Observe fixture output'],requestId:'real-internal'},{agent})
+      assert.ok(internal.executionId,JSON.stringify(internal))
       agent.followup(Object.freeze({id:crypto.randomUUID(),role:'user',source:{kind:'user'},content:[{type:'text',text:'Produce the verification fixture output.'}]}))
       await agent.whenIdle()
       const finished = await service.finishInternalExecution({executionId:internal.executionId,output:'Verify actual logged result'},{agent})
       service.ledger.recordAcceptance(internal.executionId,{state:'passed',evidenceIds:[finished.evidenceId]})
       const task = service.ledger.getTask(internal.taskId)
       assert.equal(service.ledger.transitionTask(task.taskId,'completed',task.state).state,'completed')
-      const dsh = await service.executeObjective({worker:'dsh_subagent',agentPreset:'cordis',objective:'Inspect plugin fixture',workspacePath:root,mutatesWorkspace:false,modelProvider:selection.provider,model:selection.model,effort:'off',requestId:'real-dsh'},{agent})
+      const dsh = await service.executeObjective({worker:'dsh_subagent',agentPreset:'cordis',objective:'Inspect plugin fixture',intent:'new',workspacePath:root,mutatesWorkspace:false,modelProvider:selection.provider,model:selection.model,effort:'off',requestId:'real-dsh'},{agent})
       assert.equal(dsh.stopReason,'completed')
       assert.equal(service.ledger.getTask(dsh.taskId).state,'active')
       const childLog = await ctx.sessionPersistence.open(dsh.childId,'read')
@@ -275,9 +286,9 @@ export function apply(ctx) {
       assert.equal(ctx.commands.list(agent).some(command => command.name === 'personal-assistant'), false)
       snapshot.assistantCommandAbsent=true
       // Exercise the installed tool pipeline so the real dashboard has a fixture execution to inspect.
-      const uiResult=await ctx.tools.execute({agent,signal:new AbortController().signal,calls:[{type:'tool-call',id:crypto.randomUUID(),name:'personal_agent',arguments:JSON.stringify({action:'execute',worker:'dsh_subagent',agentPreset:'cordis',objective:'验证私人助理插件的任务与质量面板',workspacePath:root,mutatesWorkspace:false,modelProvider:selection.provider,model:selection.model,effort:'off',acceptance:['核对 Harness 持久化结果'],forceNew:true,requestId:crypto.randomUUID()})}]})
+      const uiResult=await ctx.tools.execute({agent,signal:new AbortController().signal,calls:[{type:'tool-call',id:crypto.randomUUID(),name:'personal_agent',arguments:JSON.stringify({action:'execute',worker:'dsh_subagent',agentPreset:'cordis',objective:'验证私人助理插件的任务与质量面板',workspacePath:root,mutatesWorkspace:false,modelProvider:selection.provider,model:selection.model,effort:'off',acceptance:['核对 Harness 持久化结果'],intent:"new",requestId:crypto.randomUUID()})}]})
       assert.equal(uiResult.results[0].result.isError,false,JSON.stringify(uiResult))
-      const ui = new PersonalAgentService(resolveConfig({dataDir:path.join(root,'data'),codexHome:path.join(root,'codex'),historyRead:false,memoryExtractionEnabled:false,cleanupEnabled:false}), {context:ctx})
+      const ui = new PersonalAgentService(resolveConfig({dataDir:path.join(root,'data'),codexHome:path.join(root,'codex'),historyRead:true,memoryExtractionEnabled:false,cleanupEnabled:false}), {context:ctx})
       await ui.initialize()
       try {
         ui.config={...ui.config,backgroundModelPolicy:'fixture',modelPolicies:{fixture:{worker:'dsh_subagent',provider:selection.provider,model:selection.model,effort:'off'}}}

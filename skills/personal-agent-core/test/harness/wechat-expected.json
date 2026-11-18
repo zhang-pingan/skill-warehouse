@@ -20,5 +20,12 @@
   "ordinaryMemorySourcePreserved": true,
   "ordinaryAssistantAuthority": false,
   "roleCommandAbsent": true,
-  "sessionSelectionAbsent": true
+  "sessionSelectionAbsent": true,
+  "mainResetPreservesMemory": true,
+  "mainResetPreservesWechat": true,
+  "mainResetArchivesSource": true,
+  "mainResetStartsEmpty": true,
+  "mainNamesPinned": true,
+  "archiveNameNumbered": true,
+  "emptyMainPresetRecovered": true
 }

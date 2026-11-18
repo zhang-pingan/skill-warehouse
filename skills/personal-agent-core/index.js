@@ -5,13 +5,15 @@ import { PersonalAgentService } from './lib/service.js'
 import { MainSession } from './lib/main-session.js'
 import { WechatChannel } from './lib/wechat-channel.js'
 import { registerWechatInteractions } from './lib/wechat-interactions.js'
+import { executionProjection } from './lib/execution-projection.js'
+import { ExecutionResults } from './lib/execution-results.js'
 import { wechatProjection } from './lib/wechat-projection.js'
 
 export const Config = { '~standard': { version: 1, vendor: 'personal-agent', validate(input) {
   try { return { value: resolveConfig(input) } } catch (error) { return { issues: [{ message: error.message }] } }
 } } }
 
-export const inject = ['webServer', 'connection', 'tools', 'timer', 'appReady', 'sessionPersistence', 'sessionController', 'workspaceController', 'credentials', 'sessionProjections', 'llm', 'agentDefaultModel', 'workingDirectory', 'agentPresets', 'workspaceRegistry', 'agents', 'subagents']
+export const inject = ['webServer', 'connection', 'tools', 'timer', 'appReady', 'sessionPersistence', 'sessionTitle', 'sessionController', 'workspaceController', 'credentials', 'sessionProjections', 'sessionQuery', 'llm', 'agentDefaultModel', 'workingDirectory', 'agentPresets', 'workspaceRegistry', 'agents', 'subagents']
 const BASE = '/api/personal-agent'
 const failureText = error => String(error?.message ?? error).slice(0, 1000)
 
@@ -23,7 +25,7 @@ export const TOOL = {
   parameters: { type: 'object', properties: {
     sessionId:{type:'string'}, sort:{type:'string',enum:['recent','relevance']}, version:{type:'string',description:'Return the version from the previous task detail page to detect changed history.'},
     historyMessageId: {type:'string',description:'Read staged or unassigned original message without fabricating evidence or a task.'},
-    sessionTaskId: {type:'string',description:'Stable historical session task id; memory_get reads its overview and paginated original messages.'},
+    sessionTaskId: {type:'string',description:'Stable historical task id for memory_get, route and execute. Continuing it retains its original native session.'},
     offset: {type:'integer',minimum:0,description:'Task-level query or message-page offset.'},
     action: { type: 'string', enum: ['health','import_history','search_history','memory_search','memory_get','remember','correct_memory','confirm_memory','confirm_entity','retract_memory','forget_memory','retry_memory_extraction','list_tasks','get_task','create_task','create_step','list_steps','transition_step','transition_task','record_acceptance','finish_execution','cancel_execution','link_project_location','route','route_feedback','execute','list_approvals','feature_flags','backup','verify_backup'] },
     query: { type: 'string', description: 'Concise topical terms. Historical matches are grouped and paginated by session task across hot and archived sources. Read coverage before interpreting no matches; use memory_get with sessionTaskId then evidenceId for original sources.' }, content: { type: 'string' }, projectId: { type: 'string' }, taskId: { type: 'string' }, memoryId: { type: 'string' }, entityId: { type: 'string' }, edgeId: { type: 'string' }, evidenceId: { type: 'string' }, predicate: { type: 'string' }, value: { type: 'object', additionalProperties: true }, entityName: { type: 'string' }, entityType: { type: 'string', enum: ['user','project','repository','person','tool','task','session','artifact','other'] }, kind: { type: 'string', enum: ['fact','reflection','decision','summary','objective','correction','follow_up'] }, includeCandidates: { type: 'boolean' }, includeHistory: { type: 'boolean', description: 'memory_search only: include task-index and raw-message recall grouped by historical task, default true. list_tasks always reads only the persistent task ledger.' }, sourceSystem: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, asOf: { type: 'string', description: 'Recall facts valid at this ISO timestamp with timezone; defaults to now. from/to filter source or record dates.' }, limit: { type: 'integer', minimum: 1, maximum: 200 },
@@ -32,14 +34,14 @@ export const TOOL = {
     dependencies: { type: 'array', maxItems: 32, items: { type: 'string' } }, correction: { type: 'object', additionalProperties: true }, outcome: { type: 'string', enum: ['accepted','corrected','rejected'] }, routeDecisionId: { type: 'string' },
     input: { type: 'object', additionalProperties: true }, full: { type: 'boolean' },
     method: { type: 'string' }, params: { type: 'object', additionalProperties: true },
-    workspacePath: { type: 'string' }, projectName: { type: 'string' }, relevantPaths: { type: 'array', maxItems: 200, items: { type: 'string' } },
-    requestId: { type: 'string' }, sourceMessageId: { type: 'string' }, forceNew: { type: 'boolean' }, forceFork: { type: 'boolean' },
-    worker: { type: 'string', enum: ['codex','dsh_subagent','internal'] }, provider: { type: 'string' }, agentPreset: { type: 'string' }, label: { type: 'string' }, name: { type: 'string' }, output: { type: 'string' }, result: { type: 'string' }, mutatesWorkspace: { type: 'boolean' }, acceptance: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'string' } }, acceptanceState: { type: 'string', enum: ['passed','failed','pending'] }, acceptanceSummary: { type: 'string' }, criterionId: { type: 'string' }, evidenceIds: { type: 'array', maxItems: 32, items: { type: 'string' } }, executionId: { type: 'string' }, includeTemporary: { type: 'boolean' },
+    workspacePath: { type: 'string', description: 'Execution directory. DSH continuation: omit to keep the native current directory, or supply an existing directory to switch the same session before execution.' }, projectName: { type: 'string' }, relevantPaths: { type: 'array', maxItems: 200, items: { type: 'string' } },
+    requestId: { type: 'string' }, sourceMessageId: { type: 'string' }, intent:{type:'string',enum:['auto','new','continue']}, newTask:{type:'boolean'}, sessionAction:{type:'string',enum:['continue','new','fork']}, sessionChangeQuote:{type:'string',description:'Exact current-user request for a new execution session or fork; required when replacing an existing session.'},
+    worker: { type: 'string', enum: ['dsh_subagent','internal'], description:'For a new delegated worker, specify dsh_subagent with agentPreset cordis only for DSH plugin creation or maintenance. Otherwise omit both to use the configured default. Existing sessions retain their backend. internal records direct work.' }, provider: { type: 'string' }, agentPreset: { type: 'string' }, label: { type: 'string' }, name: { type: 'string' }, output: { type: 'string' }, result: { type: 'string' }, mutatesWorkspace: { type: 'boolean' }, acceptance: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'string' } }, acceptanceState: { type: 'string', enum: ['passed','failed','pending'] }, acceptanceSummary: { type: 'string' }, criterionId: { type: 'string', description: 'Use the id from get_task verification.criteria or step verification.criteria, not the requirement text.' }, evidenceIds: { type: 'array', maxItems: 32, items: { type: 'string' }, description: 'Use the worker result evidenceId or get_task verification.evidenceIds for this execution. Historical message IDs are not evidence IDs.' }, executionId: { type: 'string' }, includeTemporary: { type: 'boolean' },
     model: { type: 'string' }, modelProvider: { type: 'string' }, effort: { type: 'string' }, personality: { type: 'string' }, developerInstructions: { type: 'string' },
     requestedCapabilities: { type: 'array', maxItems: 50, items: { type: 'string' } },
     verify: { type: 'boolean' }, backupName: { type: 'string' },
   }, required: ['action'], additionalProperties: false },
-  output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+  output: { schema: { oneOf: [{ type: 'object', additionalProperties: true }, { type: 'array', items: { type: 'object', additionalProperties: true } }, { type: 'null' }] }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
   isConcurrencySafe: args => ['health','search_history','memory_search','memory_get','list_tasks','get_task','list_approvals','feature_flags','verify_backup'].includes(args?.action),
 }
 
@@ -87,9 +89,12 @@ export function apply(ctx, pluginConfig = {}) {
     ]
     const service = new PersonalAgentService(config, { context: ctx, logger: ctx.logger ?? console })
     let projectionHandle = null
+    let executionProjectionHandle = null
     const ready = service.initialize().then(async health => {
       const handle = await ctx.sessionProjections.register(wechatProjection)
       projectionHandle = handle
+      executionProjectionHandle = await ctx.sessionProjections.register(executionProjection)
+      service.results = new ExecutionResults(service, executionProjectionHandle)
       service.mainSession = new MainSession(service, handle)
       service.wechat = new WechatChannel(service, handle)
       return health
@@ -106,7 +111,7 @@ export function apply(ctx, pluginConfig = {}) {
       try {
         if (beforeReady) await beforeReady(req)
         await ready
-        const maintenance = routePath === '/memory/initialization' || routePath === '/memory/extraction'
+        const maintenance = routePath === '/memory/initialization' || routePath === '/memory/extraction' || routePath === '/session/reset'
         json(res, 200, await (maintenance ? handler(req) : service.request(() => handler(req))))
       } catch (error) { json(res, error.statusCode ?? 400, { error: failureText(error), code: error.code ?? null }) }
     } })
@@ -165,6 +170,7 @@ export function apply(ctx, pluginConfig = {}) {
       if (req.method === 'GET') return settingsView()
       const updated = service.updateRuntimeSettings(await requestJson(req))
       if (Object.keys(updated.settings).some(key => key.startsWith('wechat') && updated.previous[key] !== updated.settings[key])) await service.wechat?.sync()
+      if (service.mainTitleNeedsApply) { await service.mainSession.ensure(); service.mainTitleNeedsApply = false }
       syncBackgroundTimers?.({ historyBecameEnabled: !updated.previous.historyPeriodicSyncEnabled && updated.settings.historyPeriodicSyncEnabled })
       return settingsView()
     }))
@@ -176,6 +182,10 @@ export function apply(ctx, pluginConfig = {}) {
       const body = await requestJson(req)
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || typeof body.enabled !== 'boolean') throw new TypeError('enabled must be the only boolean setting')
       const codexChange = await service.setCodexEnabled(body.enabled)
+      if (body.enabled) await service.connectCodex().catch(error => {
+        // Enablement remains saved; settings expose connectionError and a retry action.
+        ctx.logger?.warn?.('Personal-agent Codex connection failed', error)
+      })
       return { ...await settingsView(), codexChange }
     }))
     disposers.push(route('/memory', ['GET','POST'], async req => {
@@ -215,6 +225,12 @@ export function apply(ctx, pluginConfig = {}) {
       const target = await service.mainSession.ensure()
       return { sessionId: target.sessionId, agentPreset: target.agentPreset }
     }))
+    disposers.push(route('/session/reset', ['GET', 'POST'], async req => {
+      if (req.method === 'GET') return service.mainSession.reset.view()
+      const body = await requestJson(req)
+      if (!body || Object.keys(body).some(key => !['confirmed', 'expectedSessionId'].includes(key))) throw new TypeError('Invalid main-session reset request')
+      return service.mainSession.reset.start(body)
+    }))
     const requireOperator = req => {
       if (authorizedOperator(req, config.operatorToken)) return
       const error = new Error('Authenticated operator token is required')
@@ -226,9 +242,13 @@ export function apply(ctx, pluginConfig = {}) {
       return service.operate(await requestJson(req), { actor: 'operator', codexMutationAuthority: true, featureAuthority: true, approvalAuthority: true })
     }, { beforeReady: requireOperator }))
     disposers.push(...registerWechatInteractions(ctx, ready, () => service.wechat.interactions))
-    disposers.push(ctx.on('session/event', session => {
+    disposers.push(ctx.on('session/event', (session,event) => {
+      if (!service.database.db) return
+      if (event?.type === 'tool/result' && service.results) service.trackOperation(()=>service.results.observeToolResult(session,event),'worker tool receipt')
+      if (event?.type === 'turn/end' && service.results && service.database.db.prepare('SELECT 1 FROM dsh_execution_runs WHERE session_id=? AND terminal_json IS NULL').get(session.id)) { service.results.captureTerminal(session); if(service.database.db.prepare("SELECT mode FROM dsh_execution_runs WHERE session_id=? ORDER BY start_seq DESC LIMIT 1").get(session.id)?.mode!=='subagent') void service.results.kick() }
       if (service.wechat?.store.channel().session_id === session.id) service.wechat.kick()
     }))
+    disposers.push(ctx.on('subagent/end', () => { if (service.results) void service.results.kick() }))
     disposers.push(ctx.tools.register({ ...TOOL, execute: async (args, exec) => {
       await ready
       exec?.signal?.throwIfAborted?.()
@@ -236,11 +256,11 @@ export function apply(ctx, pluginConfig = {}) {
       const callerWorkspaceRoot = exec?.agent && !service.isAssistantSession(sessionId)
         ? await ctx.workingDirectory.ensure(exec.agent, exec.signal)
         : null
-      return service.operate(args, { actor: 'assistant', callerWorkspaceRoot, codexMutationAuthority: false, featureAuthority: false, approvalAuthority: false, agent: exec?.agent ?? null, signal: exec?.signal ?? null })
+      return service.operate({ ...args, ...(args.action==='execute' && !args.requestId ? {requestId:exec.callId} : {}) }, { actor: 'assistant', callerWorkspaceRoot, codexMutationAuthority: false, featureAuthority: false, approvalAuthority: false, agent: exec?.agent ?? null, signal: exec?.signal ?? null })
     } }))
     for (const dispose of disposers) yield dispose
     let disposed = false
-    const replaceInterval = (name, enabled, intervalMs, callback) => {
+    const replaceInterval = (name, enabled, intervalMs, callback, afterRun = null) => {
       const current = backgroundTimers.get(name)
       if (enabled && current?.intervalMs === intervalMs) return false
       if (!enabled && !current) { service.backgroundJobs?.configure(name, false, intervalMs); return false }
@@ -249,19 +269,31 @@ export function apply(ctx, pluginConfig = {}) {
       backgroundTimers.delete(name)
       if (!enabled) return true
       const stop = ctx.timer?.interval(() => {
-        if (!service.memoryInitializationOperation) service.trackOperation(() => service.memoryInitializationOperation ? null : service.backgroundJobs.tick(name, callback), name)
+        if (!service.memoryInitializationOperation && !disposed) service.trackOperation(async () => {
+          if (service.memoryInitializationOperation || disposed) return
+          await service.backgroundJobs.tick(name, callback)
+          if (!service.memoryInitializationOperation && !disposed) await afterRun?.()
+        }, name)
       }, intervalMs)
       backgroundTimers.set(name, { enabled, intervalMs, stop: typeof stop === 'function' ? stop : () => {} })
       return true
+    }
+    const extractAfterHistory = () => {
+      if (service.config.memoryExtractionEnabled && !service.memoryInitializationOperation && !disposed) {
+        return service.trackOperation(
+          () => service.backgroundJobs.run('memory-extraction', () => service.memory.run()),
+          'memory extraction',
+        )
+      }
     }
     syncBackgroundTimers = ({ startup = false, historyBecameEnabled = false } = {}) => {
       if (!backgroundStarted || disposed) return
       const settings = service.runtimeSettingsView().settings
       replaceInterval('history', settings.historyPeriodicSyncEnabled, settings.importIntervalMs,
-        async () => { await service.importHistory(); if(service.config.memoryExtractionEnabled) await service.memory.run() })
+        () => service.importHistory(), extractAfterHistory)
       replaceInterval('worker-heartbeat', settings.workerHeartbeatEnabled, settings.workerHeartbeatMs, () => service.heartbeatWorkers())
       replaceInterval('inbox', settings.inboxRetryEnabled, settings.inboxRetryIntervalMs,
-        () => service.retryInboxProjections())
+        async () => { await service.retryInboxProjections(); await service.results?.kick() })
       replaceInterval('memory-extraction', settings.memoryExtractionEnabled, settings.memoryExtractionIntervalMs,
         () => service.memory.run())
       replaceInterval('cleanup', settings.cleanupEnabled, settings.cleanupIntervalMs,
@@ -269,7 +301,7 @@ export function apply(ctx, pluginConfig = {}) {
       replaceInterval('backup', settings.backupEnabled, settings.backupIntervalMs,
         () => service.createBackup())
       if ((startup && settings.historyStartupSyncEnabled) || historyBecameEnabled) {
-        service.trackOperation(async () => { await service.backgroundJobs.run('history', () => service.importHistory({full:startup})); if(service.config.memoryExtractionEnabled && !disposed) await service.backgroundJobs.run('memory-extraction', () => service.memory.run()) }, 'history import')
+        service.trackOperation(async () => { await service.backgroundJobs.run('history', () => service.importHistory({full:startup})); await extractAfterHistory() }, 'history import')
       }
     }
     const startup = Promise.withResolvers()
@@ -277,6 +309,8 @@ export function apply(ctx, pluginConfig = {}) {
     const backgroundReady = Promise.all([ready, startup.promise]).then(() => {
       if (disposed) return
       void service.wechat.sync().catch(error => ctx.logger?.warn?.('Personal-agent WeChat startup failed', error))
+      void service.results?.kick()
+      if (service.config.codexWorkerEnabled) service.trackOperation(() => service.connectCodex(), 'Codex connection')
       backgroundStarted = true
       syncBackgroundTimers({ startup: true })
     }).catch(error => ctx.logger?.error?.('Personal-agent initialization failed', error))
@@ -290,6 +324,7 @@ export function apply(ctx, pluginConfig = {}) {
       await ready.catch(() => {})
       await backgroundReady
       await service.dispose()
+      await executionProjectionHandle?.dispose()
       await projectionHandle?.dispose()
     }
   }, 'Personal-agent ledger, history retrieval, router, controlled Codex adapter, and recovery')

@@ -11,6 +11,49 @@ const MUTATION_METHODS = new Set([
   'thread/start', 'thread/resume', 'thread/fork', 'thread/archive', 'thread/unarchive', 'thread/delete', 'thread/unsubscribe',
   'turn/start', 'turn/steer', 'turn/interrupt', 'thread/queue/add', 'thread/queue/update', 'thread/queue/delete', 'thread/queue/reorder', 'thread/queue/start',
 ])
+const isRpcId = value => typeof value === 'string' || typeof value === 'number' && Number.isFinite(value)
+const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+
+function invalidMessage(reason) {
+  return Object.assign(new Error(`Invalid Codex App Server message: ${reason}`), { code: 'CODEX_PROTOCOL_ERROR' })
+}
+
+function report(logger, level, message, details) {
+  try {
+    if (typeof logger?.[level] === 'function') {
+      logger[level](message, details)
+      return
+    }
+  } catch (loggerError) {
+    // Fall back to the process logger when the configured logger is unavailable.
+  }
+  try { console[level]?.(message, details) }
+  catch (consoleError) { /* No independent logger is available. */ }
+}
+
+/** Validate the inbound RPC envelope without including remote content in diagnostics. */
+function parseMessage(data) {
+  let message
+  try { message = JSON.parse(data.toString('utf8')) }
+  catch { throw invalidMessage('invalid JSON') }
+  if (!isRecord(message)) throw invalidMessage('expected an object')
+  const hasId = Object.hasOwn(message, 'id')
+  const hasMethod = Object.hasOwn(message, 'method')
+  const hasResult = Object.hasOwn(message, 'result')
+  const hasError = Object.hasOwn(message, 'error')
+  if (hasId && !isRpcId(message.id)) throw invalidMessage('id must be a string or finite number')
+  if (hasResult || hasError) {
+    if (!hasId || hasMethod || hasResult === hasError) throw invalidMessage('invalid response envelope')
+    if (hasError && (!isRecord(message.error) || !Number.isInteger(message.error.code) || typeof message.error.message !== 'string')) {
+      throw invalidMessage('error must contain an integer code and message')
+    }
+    return message
+  }
+  if (!hasMethod || typeof message.method !== 'string' || !message.method.trim()) throw invalidMessage('method must be a nonempty string')
+  if (message.params != null && !isRecord(message.params)) throw invalidMessage('params must be an object')
+  if (message.params?.eventId != null && !isRpcId(message.params.eventId)) throw invalidMessage('params.eventId must be a string or finite number')
+  return message
+}
 
 export class CodexRpcError extends Error {
   constructor(method, error) {
@@ -29,7 +72,7 @@ export class CodexAppServerAdapter extends EventEmitter {
     this.ledger = ledger
     this.logger = logger
     this.requestTimeoutMs = requestTimeoutMs
-    this.authorizeMutation = authorizeMutation ?? (() => !!this.config.codexMutations)
+    this.authorizeMutation = authorizeMutation ?? (() => false)
     this.adapterInstanceId = newId('adapter')
     this.connectionEpoch = 0
     this.nextRequestId = 1
@@ -160,11 +203,17 @@ export class CodexAppServerAdapter extends EventEmitter {
     })
   }
 
+  /** Reject malformed frames and unrecorded input before dispatch; failed RPC replies remain pending. */
   onMessage(data, epoch) {
     if (epoch !== this.connectionEpoch) return
     let message
-    try { message = JSON.parse(data.toString('utf8')) } catch (error) { this.emit('protocolError', error); return }
-    if (Object.hasOwn(message, 'id') && (Object.hasOwn(message, 'result') || Object.hasOwn(message, 'error'))) {
+    try { message = parseMessage(data) }
+    catch (error) {
+      report(this.logger, 'warn', 'Codex message rejected; no input was dispatched. Check App Server compatibility if this persists.', { code: error.code, error: error.message })
+      this.emit('protocolError', error)
+      return
+    }
+    if (Object.hasOwn(message, 'result') || Object.hasOwn(message, 'error')) {
       const pending = this.pending.get(message.id)
       if (!pending || pending.epoch !== epoch) { this.emit('orphanResponse', message); return }
       clearTimeout(pending.timer)
@@ -173,21 +222,21 @@ export class CodexAppServerAdapter extends EventEmitter {
       else pending.resolve(message.result)
       return
     }
-    if (Object.hasOwn(message, 'id') && message.method) {
-      const handle = { adapterInstanceId: this.adapterInstanceId, connectionEpoch: epoch, externalRequestId: message.id, method: message.method }
-      const inbox = this.persistInbound(message, handle)
-      if (!inbox.pending) return
-      this.emit('serverRequest', { handle, method: message.method, params: message.params ?? {}, inboxId: inbox.inboxId })
+    const handle = Object.hasOwn(message, 'id')
+      ? { adapterInstanceId: this.adapterInstanceId, connectionEpoch: epoch, externalRequestId: message.id, method: message.method }
+      : null
+    let inbox
+    try { inbox = this.persistInbound(message, handle) }
+    catch (cause) {
+      const error = Object.assign(new Error('Unable to record Codex App Server input', { cause }), { code: 'CODEX_INBOX_PERSISTENCE_FAILED' })
+      report(this.logger, 'error', 'Codex input was not dispatched or acknowledged. Check ledger storage and reconcile active work before retrying.', { code: error.code, error: cause?.message ?? error.message })
+      this.emit('inboxPersistenceError', error)
       return
     }
-    if (message.method) {
-      const inbox = this.persistInbound(message)
-      if (!inbox.pending) return
-      this.emit('notification', { method: message.method, params: message.params ?? {}, inboxId: inbox.inboxId })
-      this.emit(message.method, message.params ?? {})
-      return
-    }
-    this.emit('protocolError', new Error('Unknown Codex message shape'))
+    if (!inbox.pending) return
+    const input = { method: message.method, params: message.params ?? {}, inboxId: inbox.inboxId }
+    if (handle) this.emit('serverRequest', { ...input, handle })
+    else this.emit('notification', input)
   }
 
   persistInbound(message, handle = null) {

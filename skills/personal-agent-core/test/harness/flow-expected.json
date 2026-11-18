@@ -1,0 +1,17 @@
+{
+  "releasedChildContinued": true,
+  "ordinarySessionContinued": true,
+  "originalPresetPreserved": true,
+  "foreignTreeBlocked": true,
+  "duplicateRequestSuppressed": true,
+  "resultsDeliveredOnce": true,
+  "acceptancePending": true,
+  "multipleChildReceiptsPreserved": true,
+  "internalWorkPreservesExecutor": true,
+  "inheritedHeaderIgnored": true,
+  "coldDirectoryRetained": true,
+  "coldDirectorySwitched": true,
+  "multipleDirectoryChangesObserved": true,
+  "executionDirectoriesPreserved": true,
+  "switchedWorkspaceProtected": true
+}

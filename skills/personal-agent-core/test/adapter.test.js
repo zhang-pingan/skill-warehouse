@@ -33,11 +33,18 @@ test('UDS adapter performs Codex handshake and classifies notifications', async 
   let server
   try {
     let mutationAuthorized = false
+    let experimentalApi = false
     server = await serverAt(f.config.codexSocketPath, (ws, request) => {
       messages.push(request)
-      if (request.method === 'initialize') ws.send(JSON.stringify({ id: request.id, result: { serverInfo: { name: 'fake' } } }))
+      if (request.method === 'initialize') {
+        experimentalApi = request.params.capabilities.experimentalApi
+        ws.send(JSON.stringify({ id: request.id, result: { serverInfo: { name: 'fake' } } }))
+      }
       if (request.method === 'thread/list') ws.send(JSON.stringify({ id: request.id, result: { data: [] } }))
-      if (request.method === 'thread/start') ws.send(JSON.stringify({ id: request.id, result: { thread: { id: 'created' } } }))
+      if (request.method === 'thread/start') ws.send(JSON.stringify({ id: request.id,
+        ...(request.params.runtimeWorkspaceRoots && !experimentalApi
+          ? { error: { code: -32600, message: 'thread/start.runtimeWorkspaceRoots requires experimentalApi capability' } }
+          : { result: { thread: { id: 'created' } } }) }))
     })
     const adapter = new CodexAppServerAdapter({ ...f.config, codexMutations: false }, { ledger: f.ledger, authorizeMutation: () => mutationAuthorized })
     let notification
@@ -59,9 +66,10 @@ test('UDS adapter performs Codex handshake and classifies notifications', async 
     adapter.onMessage(Buffer.from(JSON.stringify({ method: 'thread/started', params: { thread: { id: 't1' } } })), adapter.connectionEpoch)
     assert.equal(notificationCount, 1)
     assert.deepEqual(await adapter.request('thread/list', {}), { data: [] })
-    await assert.rejects(adapter.request('thread/start', {}), /not authorized/)
+    const params = { cwd: f.root, runtimeWorkspaceRoots: [f.root] }
+    await assert.rejects(adapter.request('thread/start', params), /not authorized/)
     mutationAuthorized = true
-    assert.deepEqual(await adapter.request('thread/start', {}), { thread: { id: 'created' } })
+    assert.deepEqual(await adapter.request('thread/start', params), { thread: { id: 'created' } })
     await adapter.close()
   } finally { await server?.close(); f.close() }
 })
@@ -78,6 +86,99 @@ test('failed initialization cleans up its captured socket', async () => {
     assert.equal(adapter.ws, null)
     assert.equal(adapter.initialized, false)
   } finally { await server?.close(); f.close() }
+})
+
+test('malformed Codex envelopes are reported without persisting or dispatching them', t => {
+  const f = fixture()
+  t.after(() => f.close())
+  const warnings = [], errors = [], notifications = [], requests = []
+  const adapter = new CodexAppServerAdapter(f.config, { ledger: f.ledger, logger: { warn: (...args) => warnings.push(args) } })
+  adapter.on('protocolError', error => errors.push(error))
+  adapter.on('notification', message => notifications.push(message))
+  adapter.on('serverRequest', message => requests.push(message))
+  const invalid = [null, [], true, 1, 'text', {}, { method: 42 }, { method: '' },
+    { id: {}, method: 'request' }, { id: null, result: null }, { id: 1, result: null, error: { code: -1, message: 'bad' } },
+    { id: 1, result: null, method: 'request' }, { id: 1, error: null }, { id: 1, error: { code: 'bad', message: 2 } },
+    { result: {} }, { method: 'turn/completed', params: [] }, { method: 'turn/completed', params: 'text' },
+    { method: 'turn/completed', params: { eventId: {} } }]
+  for (const value of invalid) assert.doesNotThrow(() => adapter.onMessage(Buffer.from(JSON.stringify(value)), adapter.connectionEpoch))
+  assert.doesNotThrow(() => adapter.onMessage(Buffer.from('{"secret":"DO_NOT_LOG_THIS",'), adapter.connectionEpoch))
+  assert.equal(errors.length, invalid.length + 1)
+  assert.ok(errors.every(error => error.code === 'CODEX_PROTOCOL_ERROR'))
+  assert.equal(warnings.length, errors.length)
+  assert.equal(JSON.stringify(warnings).includes('DO_NOT_LOG_THIS'), false)
+  assert.deepEqual(notifications, [])
+  assert.deepEqual(requests, [])
+  assert.equal(f.database.db.prepare('SELECT count(*) AS count FROM inbox').get().count, 0)
+  adapter.onMessage(Buffer.from('{"method":"thread/started","params":{"thread":{"id":"valid"}}}'), adapter.connectionEpoch)
+  assert.equal(notifications.length, 1)
+  assert.equal(f.database.db.prepare('SELECT count(*) AS count FROM inbox').get().count, 1)
+})
+
+test('remote method names cannot emit local adapter lifecycle or approval events', t => {
+  const f = fixture()
+  t.after(() => f.close())
+  const adapter = new CodexAppServerAdapter(f.config, { ledger: f.ledger })
+  const notifications = [], requests = [], ready = []
+  adapter.on('notification', message => notifications.push(message))
+  adapter.on('serverRequest', message => requests.push(message))
+  adapter.on('ready', message => ready.push(message))
+  for (const method of ['error', 'notification', 'serverRequest', 'ready']) {
+    assert.doesNotThrow(() => adapter.onMessage(Buffer.from(JSON.stringify({ method, params: {} })), adapter.connectionEpoch))
+  }
+  assert.equal(notifications.length, 4)
+  assert.deepEqual(requests, [])
+  assert.deepEqual(ready, [])
+})
+
+test('invalid WebSocket replies leave the request pending for a valid null result', { timeout: 10_000 }, async t => {
+  const f = fixture({ codexSocketPath: `/tmp/pac-${process.pid}-${Date.now()}-${Math.random()}.sock` })
+  let server, adapter
+  t.after(async () => { await adapter?.close(); await server?.close(); f.close() })
+  server = await serverAt(f.config.codexSocketPath, (ws, request) => {
+    if (request.method === 'initialize') ws.send(JSON.stringify({ id: request.id, result: {} }))
+    if (request.method === 'thread/list') {
+      ws.send('null')
+      ws.send(JSON.stringify({ id: request.id, result: 'invalid', error: { code: -1, message: 'conflicting fields' } }))
+      ws.send(JSON.stringify({ id: request.id, result: null }))
+    }
+  })
+  const errors = []
+  adapter = new CodexAppServerAdapter(f.config, { ledger: f.ledger, logger: { warn() {} } })
+  adapter.on('protocolError', error => errors.push(error))
+  await adapter.connect()
+  assert.equal(await adapter.request('thread/list', {}), null)
+  assert.equal(errors.length, 2)
+  assert.equal(adapter.pending.size, 0)
+  assert.equal(adapter.initialized, true)
+})
+
+test('inbox write failures prevent dispatch and remain observable before a later delivery', t => {
+  const f = fixture()
+  t.after(() => f.close())
+  const logs = [], errors = [], notifications = [], requests = []
+  const adapter = new CodexAppServerAdapter(f.config, { ledger: f.ledger, logger: { error: (...args) => logs.push(args) } })
+  adapter.on('inboxPersistenceError', error => errors.push(error))
+  adapter.on('notification', message => notifications.push(message))
+  adapter.on('serverRequest', message => requests.push(message))
+  const write = t.mock.method(f.ledger, 'recordInbox', () => { throw new Error('fixture storage unavailable') })
+  const frames = [
+    { method: 'thread/started', params: { eventId: 0, thread: { id: 't1' } } },
+    { id: 'approval-1', method: 'item/commandExecution/requestApproval', params: { threadId: 't1' } },
+  ]
+  for (const frame of frames) assert.doesNotThrow(() => adapter.onMessage(Buffer.from(JSON.stringify(frame)), adapter.connectionEpoch))
+  assert.equal(errors.length, 2)
+  assert.equal(logs.length, 2)
+  assert.ok(errors.every(error => error.code === 'CODEX_INBOX_PERSISTENCE_FAILED'))
+  assert.equal(notifications.length, 0)
+  assert.equal(requests.length, 0)
+  assert.equal(f.database.db.prepare('SELECT count(*) AS count FROM inbox').get().count, 0)
+  write.mock.restore()
+  for (const frame of frames) adapter.onMessage(Buffer.from(JSON.stringify(frame)), adapter.connectionEpoch)
+  assert.equal(notifications.length, 1)
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].handle.externalRequestId, 'approval-1')
+  assert.equal(f.database.db.prepare('SELECT count(*) AS count FROM inbox').get().count, 2)
 })
 
 test('server request response is bound to adapter instance and epoch', async () => {

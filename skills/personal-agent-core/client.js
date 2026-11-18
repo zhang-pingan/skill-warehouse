@@ -677,6 +677,19 @@ window.__ModuleLoader__.load({
     const PANEL = 'personal-agent-core';
 
     const zh = {
+      mainSessionGroup: "主会话",
+      mainSessionTitle: "主会话名称",
+      mainSessionTitleHint: "修改后自动生效；清空时按“名称-废弃会话-1、2、3…”命名旧会话，编号连续递增",
+      mainSessionTitleError: "名称不能为空，最多 48 字节（约 16 个汉字）",
+      mainSessionGroupHint: "管理桌面与微信共用的唯一对话，记忆系统独立保留",
+      mainSessionClear: "清空主会话历史",
+      mainSessionClearHint: "同步有效对话、归档旧会话并新建空会话。保留记忆、任务、设置和微信登录；旧会话的待处理消息、回复和审批不会转入新会话。",
+      mainSessionClearConfirm: "清空当前主会话历史并开始新对话？\n\n旧会话的有效对话会同步到记忆系统，原会话归档保留。已有记忆、任务和设置不会删除；微信保持登录并自动切换到新主会话。旧会话的待处理消息、回复和审批不会转入新会话。\n\n主会话运行期间无法清空。",
+      mainSessionClearing: "正在清理主会话…",
+      mainSessionClearDraining: "正在暂停微信收发并检查会话状态…",
+      mainSessionClearSyncing: "正在同步旧会话的有效对话…",
+      mainSessionClearCreating: "正在创建新主会话并更新微信关联…",
+      mainSessionCleared: "已创建空白主会话，旧会话已归档；记忆、任务和微信登录已保留",
       "jobsHint": "查看定时任务的执行情况、下次运行时间和最近错误",
       "wechatInteractionTtlMsHint": "微信问题或审批等待答复的时间，过期后不能继续确认",
       "wechatBackoffMaxMsHint": "连接失败后逐渐延长重试间隔，此值限制最长等待时间",
@@ -684,7 +697,7 @@ window.__ModuleLoader__.load({
       "wechatContextTtlMsHint": "超过此时间需从微信再发消息刷新回复凭证；服务端可能更早使其失效",
       "wechatRemoteApprovalEnabledHint": "允许在微信确认单次操作，不提供永久授权",
       "wechatMirrorUserEnabledHint": "将你在桌面主会话输入的原文同步到本人微信",
-      "codexWorkerHint": "启用会同步 Codex 历史并开放任务执行；关闭会清理可移除的本地历史镜像",
+      "codexWorkerHint": "启用后同步 Codex 历史，并连接服务以新建、续接或按要求分叉任务；关闭会断开连接并清理可移除的本地历史镜像",
       "workerHeartbeatEnabledHint": "让运行中的任务持续持有工作区写入资格",
       "workerHeartbeatMsHint": "执行仍在运行时续期写租约，间隔须小于租约有效期的一半",
       "leaseTtlMsHint": "限制同一工作区的并发写入；执行中由心跳续期",
@@ -828,7 +841,7 @@ window.__ModuleLoader__.load({
       extractionClose: "关闭提炼记录",
       extractionRecords: "记忆提炼 · 执行记录",  extractionRunning: "运行中", extractionQueued: "等待提炼", extractionIdle: "空闲", extractionDisabled: "定时已停用", extractionAttention: "需要关注", extractionUnavailable: "状态读取失败", extractionLoading: "读取状态中", extractionPending: "待处理作业", extractionFailed: "失败作业", extractionInput: "输入消息", extractionProcessed: "已处理", extractionLog: "查看执行日志", extractionHint: "提炼在后台子会话执行，日志保留在执行记录中。只有通过来源校验并写入记忆后，执行才会标记成功。", extractionRun_running: "运行中", extractionRun_succeeded: "已完成", extractionRun_failed: "失败", extractionRun_cancelled: "已取消", extractionRun_interrupted: "已中断",
       jobs: '后台运行状态', jobsRefresh: '刷新任务状态', jobHistory: '历史同步', jobHeartbeat: '执行租约心跳', jobInbox: '事件投影重试', jobMemory: '记忆提炼', jobCleanup: '历史归档', jobBackup: '账本备份', jobRunning: '运行中', jobScheduled: '已安排', jobDisabled: '定时执行已关闭', lastSuccess: '最近成功', nextRun: '下次运行', neverRun: '暂无记录', "settingsEffect": "管理记忆、后台任务与消息通道。修改自动生效，正在执行的操作按原配置收尾", settingsSource: '有效配置来源', savedSource: '账本中保存的设置', profileSource: 'Profile 配置及默认值', backlog: '积压与处理位置',
-      settingsAdvanced: '高级设置', settingsRange: '请输入 {min} 到 {max}', "settingsValidationError": "部分设置尚未应用，请检查标记项", settingsHeartbeatError: '执行心跳间隔必须小于写租约有效期的一半。', settingsPresetError: '默认 DSH preset 必须在允许列表中。', settingsPresetReferenceError: '移除不可用的 preset，或将 Worker 规则切换到可用 preset。', settingsPolicyNameError: '策略名称不能为空且不能重复。', settingsRequired: '此项不能为空。', settingsPolicyReferenceError: '请选择适用于当前 Worker 的模型策略。', settingsRuleCountError: '至少保留一条规则，最多支持 32 条。', settingsRuleNameError: '规则名称不能为空且不能重复。', settingsAddRule: '添加规则', settingsRemoveRule: '删除规则', settingsAddPolicy: '添加模型策略', settingsRemovePolicy: '删除模型策略', settingsRuleName: '规则名称', settingsWorkerType: 'Worker 类型', settingsDshPreset: 'DSH preset', settingsKeywords: '匹配关键词', settingsKeywordsHint: '用逗号分隔；留空表示任意任务', settingsCapabilities: '所需能力', settingsCapabilitiesHint: '用逗号分隔', settingsPolicy: '模型策略', settingsPolicyName: '策略名称', settingsProvider: '模型提供方 ID', settingsModel: '模型 ID', settingsEffort: '推理等级', settingsDefaultEffort: '沿用默认', settingsNoPolicy: '不指定', settingsUnnamedPolicy: '未命名策略', workerRulesHint: '按规则顺序匹配关键词和能力；空规则可作为兜底。', modelPoliciesHint: '为后台分析或特定 Worker 指定模型；引用的策略必须匹配 Worker 类型。', dshPresetsHint: '选择 DSH worker 可以使用的 Agent preset。', workerDsh: 'DSH worker', workerCodex: 'Codex worker', presetUnavailable: '当前 preset 不可用，可取消勾选移除。', preset_standard: '标准模式', preset_cordis: '创造模式', preset_ptc: 'PTC 模式', preset_minimal: '极简模式', presetDescription_standard: '适合大多数任务，可按需使用检索、编辑、终端等工具。', presetDescription_cordis: '用于创建和配置 DSH 插件、工具、preset 与界面。', presetDescription_ptc: '适合批量调用工具并筛选、整理、去重或汇总结果。', presetDescription_minimal: '仅提供基础工具，适合测试和对比基础表现。', presetDescriptionCustom: '自定义 Agent preset。', effort_none: '关闭', effort_minimal: '最低', effort_low: '低', effort_medium: '中', effort_high: '高', effort_xhigh: '极高', effort_max: '最大', effort_ultra: '超高',
+      settingsAdvanced: '高级设置', settingsRange: '请输入 {min} 到 {max}', "settingsValidationError": "部分设置尚未应用，请检查标记项", settingsHeartbeatError: '执行心跳间隔必须小于写租约有效期的一半。', settingsPresetError: '请选择已启用的 worker；DSH 模式必须在允许列表中。', settingsPresetReferenceError: '移除不可用的 preset，并检查默认 worker 模式。', settingsPolicyNameError: '策略名称不能为空且不能重复。', settingsRequired: '此项不能为空。', settingsPolicyReferenceError: '请选择适用于当前 Worker 的模型策略。', settingsAddPolicy: '添加模型策略', settingsRemovePolicy: '删除模型策略', settingsWorkerType: 'Worker 类型', settingsDshPreset: 'DSH preset', settingsCapabilities: '所需能力', settingsCapabilitiesHint: '用逗号分隔', settingsPolicy: '模型策略', settingsPolicyName: '策略名称', settingsProvider: '模型提供方 ID', settingsModel: '模型 ID', settingsEffort: '推理等级', settingsDefaultEffort: '沿用默认', settingsNoPolicy: '不指定', settingsUnnamedPolicy: '未命名策略', modelPoliciesHint: '为后台分析或特定 Worker 指定模型；引用的策略必须匹配 Worker 类型。', dshPresetsHint: '选择 DSH worker 可以使用的 Agent preset。', workerDsh: 'DSH worker', workerCodex: 'Codex worker', presetUnavailable: '当前 preset 不可用，可取消勾选移除。', preset_standard: '标准模式', preset_cordis: '创造模式', preset_ptc: 'PTC 模式', preset_minimal: '极简模式', presetDescription_standard: '适合大多数任务，可按需使用检索、编辑、终端等工具。', presetDescription_cordis: '用于创建和配置 DSH 插件、工具、preset 与界面。', presetDescription_ptc: '适合批量调用工具并筛选、整理、去重或汇总结果。', presetDescription_minimal: '仅提供基础工具，适合测试和对比基础表现。', presetDescriptionCustom: '自定义 Agent preset。', effort_none: '关闭', effort_minimal: '最低', effort_low: '低', effort_medium: '中', effort_high: '高', effort_xhigh: '极高', effort_max: '最大', effort_ultra: '超高',
 
       evaluation: '质量与用量', criterionRate: '验收条件通过率', verifiedExecutions: '全部条件通过的执行', evaluationScope: '按执行统计当前定义的验收条件；尚未提交的结果计为待验证。',
       noSamples: '暂无样本', executionSamples: '执行数 / 时延样本数', latency: '执行时延 P50 / P95（秒）', tokenReports: '原生用量记录', costUnavailable: '费用不可用：未提供模型价格。Codex 原生累计用量可能跨多个 turn，不累加为单次执行费用。', failedAcceptance: '未通过',
@@ -849,7 +862,6 @@ window.__ModuleLoader__.load({
       analysisInputChars: '输入字符上限',
       analysisOutputChars: '输出字符上限',
       "semanticRoutingEnabled": "用模型判断任务关联",
-      workerRules: 'Worker 规则',
       modelPolicies: '模型策略',
 
       meta: { title: '私人助理', description: '向私人助理发送请求，并管理顶级任务。' },
@@ -863,7 +875,7 @@ window.__ModuleLoader__.load({
       settingsNav: '私人助理设置', "settingsTitle": "私人助理设置", historyGroup: '历史同步', historyStartupEnabled: '启动时同步历史', historyPeriodicEnabled: '周期同步历史',
       memoryTitle: '记忆系统', memorySearchLabel: '搜索记忆内容', memoryType: '数据类型', memoryState: '记忆状态', memorySource: '来源系统', memoryFrom: '开始时间', memoryTo: '结束时间', memoryAll: '全部类型', memoryExperience: '经历档案', memoryRecord: '记忆记录', memoryEntity: '实体', memoryRelation: '关系', memoryTask: '助理任务', memoryAnyState: '全部状态', memoryAnySource: '全部来源', memorySearch: '查询', memoryReset: '重置筛选', memoryNoResults: '没有匹配记录', memoryDetails: '记录详情', memorySources: '来源依据', memoryRelations: '关联关系', memoryContent: '内容', memoryEntityName: '实体名称', memoryEntityTags: '标签（逗号分隔）', memoryEntityAliases: '别名（逗号分隔）', memoryEntityAttributes: '属性', memoryAddAttribute: '添加属性', memoryAttributeKey: '属性名', memoryAttributeValue: '属性值', memorySave: '保存修改', memoryConfirm: '确认候选', memoryRetract: '撤回', memoryDelete: '删除', memoryDeleteConfirm: '确定删除这条记忆记录？', memoryDeleteEntityConfirm: '确定删除这个实体及其关系？', memoryDeleteExperienceConfirm: '确定删除这段本地经历镜像？上游会话不会删除。', memoryRebuild: '重建检索索引', memoryRetry: '重试失败提炼', memoryRun: '立即提炼', memoryOperationDone: '操作完成', memoryExtractionStarted: '已启动记忆提炼，可在私人助理的执行记录中查看进度。', memoryOperationError: '操作失败', memoryIndex: '索引状态', memoryBusy: '正在处理…', memoryQuote: '来源',
       memoryKind: '记忆类别', memoryPredicate: '关系谓词', memoryObject: '对象 JSON', memoryScope: '适用范围 JSON', memoryValidFrom: '生效时间', memoryValidTo: '失效时间', memoryRelationLabel: '关系名称', memoryEntityType: '实体类型', memoryExperienceNote: '本地备注', memoryAssociatedEntities: '关联实体', memoryLoadMore: '加载更多', memoryTaskDeleteConfirm: '确定删除此任务？有执行或运行记录依赖的任务不能删除。', memoryDeleteRelationConfirm: '确定删除这条关系及其记忆断言？',
-      workerGroup: 'Worker 设置', dshWorkerEnabled: '启用 DSH worker', codexWorkerEnabled: '启用 Codex 历史同步与 worker', dshPresets: '允许的 DSH presets', defaultPreset: '默认 DSH preset', workerBudget: 'Worker 时间预算', routeThreshold: '恢复路由阈值',
+      workerMigrationWarning:'旧规则中有无法转换的设置：{items}。迁移前配置已保留，请核对默认选择和模型策略。', workerReadiness:'Codex 执行状态', workerConnectionOff:'连接未启用', workerNewOff:'新建权限未启用', workerResumeOff:'续接权限未启用', workerReady:'已连接，可执行任务', workerConnecting:'正在连接 Codex…', workerDisconnected:'已启用，尚未连接', workerConnectionFailed:'连接或恢复失败，请检查 Codex 服务后重试', workerReconnect:'重新连接 Codex', workerGroup: 'Worker 设置', dshWorkerEnabled: '启用 DSH worker', codexWorkerEnabled: '启用 Codex 历史同步与 worker', dshPresets: '允许的 DSH presets', defaultWorkerPriority:'默认 worker 优先级', defaultWorkerPriorityHint:'新建或维护 DSH 插件时由模型选择创造模式；其他新建任务按此选择。继续已有任务时沿用原会话。', workerPriorityStandard:'DSH · 标准模式', workerPriorityCordis:'DSH · 创造模式', routeCandidateLimit:'每页执行候选上限', workerBudget: 'Worker 时间预算', routeThreshold: '恢复路由阈值',
       codexGroup: 'Codex', codexEnabling: '正在同步 Codex 历史并启用 worker…', codexDisabling: '正在清理 Codex 历史并停用 worker…', codexEnabledResult: 'Codex 历史同步与 worker 已启用。', codexDisabledResult: 'Codex 已关闭，可移除的本地历史记录已清理。',
       syncInterval: '同步间隔', retentionDays: '默认查询天数', batchSize: '每批记录数', batchTime: '批次时间预算',
       readBuffer: '读取缓冲区', importLimit: '单次同步上限', recordLimit: '单条记录上限', inboxGroup: '收件箱恢复',
@@ -874,6 +886,19 @@ window.__ModuleLoader__.load({
       "settingsSaved": "修改已生效", "settingsSaveError": "修改未能确认生效", settingsRestore: '恢复配置默认值', settingsRetry: '重试'
     };
     const en = {
+      mainSessionGroup: "Main conversation",
+      mainSessionTitle: "Conversation name",
+      mainSessionTitleHint: "Changes apply automatically. Archived conversations use “name-废弃会话-1, 2, 3…” with consecutive numbers.",
+      mainSessionTitleError: "Enter a name of up to 48 UTF-8 bytes (about 16 Chinese characters).",
+      mainSessionGroupHint: "Manage the conversation shared by desktop and WeChat, with memories kept separately",
+      mainSessionClear: "Clear main conversation history",
+      mainSessionClearHint: "Sync messages, archive the old conversation and start an empty one. Memories, tasks, settings and WeChat login are kept. Pending messages, replies and approvals stay with the old conversation.",
+      mainSessionClearConfirm: "Clear the current main conversation and start a new one?\n\nThe old conversation is synced to memory and archived. Existing memories, tasks and settings are kept. WeChat stays signed in and switches to the new main conversation. Pending messages, replies and approvals stay with the old conversation.\n\nA running conversation cannot be cleared.",
+      mainSessionClearing: "Clearing main conversation…",
+      mainSessionClearDraining: "Pausing WeChat delivery and checking conversation activity…",
+      mainSessionClearSyncing: "Syncing messages from the old conversation…",
+      mainSessionClearCreating: "Creating the main conversation and updating WeChat…",
+      mainSessionCleared: "An empty main conversation is ready. The old conversation is archived; memories, tasks and WeChat login are kept.",
       "jobsHint": "Review scheduled jobs, upcoming runs, and recent errors.",
       "wechatInteractionTtlMsHint": "Time allowed to answer a WeChat question or approval before it expires.",
       "wechatBackoffMaxMsHint": "Maximum delay between reconnection attempts after failures.",
@@ -881,7 +906,7 @@ window.__ModuleLoader__.load({
       "wechatContextTtlMsHint": "Send a new WeChat message to refresh expired reply credentials. The server may expire them sooner.",
       "wechatRemoteApprovalEnabledHint": "Approve individual operations in WeChat without granting permanent authorization.",
       "wechatMirrorUserEnabledHint": "Send your original desktop messages to your own WeChat account.",
-      "codexWorkerHint": "Enabling syncs Codex history and allows execution. Disabling removes eligible local history copies.",
+      "codexWorkerHint": "Enable history sync and connect Codex to create, resume or explicitly fork tasks. Disabling disconnects and removes eligible local history copies.",
       "workerHeartbeatEnabledHint": "Keep the workspace write lease active while a task is running.",
       "workerHeartbeatMsHint": "Renew the write lease while running. Use an interval below half the lease duration.",
       "leaseTtlMsHint": "Limit concurrent writes to one workspace; running executions renew this lease.",
@@ -1025,7 +1050,7 @@ window.__ModuleLoader__.load({
       extractionClose: "Close extraction records",
       extractionRecords: "Memory extraction · Runs",  extractionRunning: "Running", extractionQueued: "Queued", extractionIdle: "Idle", extractionDisabled: "Schedule disabled", extractionAttention: "Needs attention", extractionUnavailable: "Status unavailable", extractionLoading: "Loading", extractionPending: "Pending jobs", extractionFailed: "Failed jobs", extractionInput: "Input messages", extractionProcessed: "Processed", extractionLog: "Open run log", extractionHint: "Extraction runs in background subagents. A run succeeds after source validation and memory writes complete.", extractionRun_running: "Running", extractionRun_succeeded: "Completed", extractionRun_failed: "Failed", extractionRun_cancelled: "Cancelled", extractionRun_interrupted: "Interrupted",
       jobs: 'Background status', jobsRefresh: 'Refresh job status', jobHistory: 'History sync', jobHeartbeat: 'Execution lease heartbeat', jobInbox: 'Event projection retries', jobMemory: 'Memory extraction', jobCleanup: 'History cleanup', jobBackup: 'Ledger backups', jobRunning: 'Running', jobScheduled: 'Scheduled', jobDisabled: 'Scheduled runs disabled', lastSuccess: 'Last success', nextRun: 'Next run', neverRun: 'No record', "settingsEffect": "Manage memory, background tasks, and messaging. Changes apply automatically; active operations finish with their original settings.", settingsSource: 'Effective settings source', savedSource: 'Settings saved in ledger', profileSource: 'Profile configuration and defaults', backlog: 'Backlog and checkpoints',
-      settingsAdvanced: 'Advanced settings', settingsRange: 'Enter a value from {min} to {max}', "settingsValidationError": "Some changes need attention before they can apply", settingsHeartbeatError: 'The heartbeat interval must be less than half the write-lease duration.', settingsPresetError: 'The default DSH preset must be in the allowed list.', settingsPresetReferenceError: 'Remove unavailable presets or assign worker rules to an available preset.', settingsPolicyNameError: 'Policy names are required and must be unique.', settingsRequired: 'This field is required.', settingsPolicyReferenceError: 'Choose a model policy for the selected worker.', settingsRuleCountError: 'Keep at least one rule; up to 32 rules are supported.', settingsRuleNameError: 'Rule names are required and must be unique.', settingsAddRule: 'Add rule', settingsRemoveRule: 'Remove rule', settingsAddPolicy: 'Add model policy', settingsRemovePolicy: 'Remove model policy', settingsRuleName: 'Rule name', settingsWorkerType: 'Worker type', settingsDshPreset: 'DSH preset', settingsKeywords: 'Matching keywords', settingsKeywordsHint: 'Comma-separated; leave empty to match any task', settingsCapabilities: 'Required capabilities', settingsCapabilitiesHint: 'Comma-separated', settingsPolicy: 'Model policy', settingsPolicyName: 'Policy name', settingsProvider: 'Model provider ID', settingsModel: 'Model ID', settingsEffort: 'Reasoning effort', settingsDefaultEffort: 'Use default', settingsNoPolicy: 'None', settingsUnnamedPolicy: 'Unnamed policy', workerRulesHint: 'Rules match keywords and capabilities in order; an empty rule can be a fallback.', modelPoliciesHint: 'Choose models for background analysis or individual workers; each reference must match the worker type.', dshPresetsHint: 'Choose which Agent presets DSH workers may use.', workerDsh: 'DSH worker', workerCodex: 'Codex worker', presetUnavailable: 'This preset is unavailable. Clear its checkbox to remove it.', preset_standard: 'Standard mode', preset_cordis: 'Creator mode', preset_ptc: 'PTC mode', preset_minimal: 'Minimal mode', presetDescription_standard: 'Suitable for most tasks, with search, editing, and terminal tools available as needed.', presetDescription_cordis: 'Create and configure DSH plugins, tools, presets, and interfaces.', presetDescription_ptc: 'Batch tool calls and filter, organize, deduplicate, or summarize results.', presetDescription_minimal: 'A small tool set for testing and comparing basic performance.', presetDescriptionCustom: 'Custom Agent preset.', effort_none: 'Off', effort_minimal: 'Minimal', effort_low: 'Low', effort_medium: 'Medium', effort_high: 'High', effort_xhigh: 'Extra high', effort_max: 'Max', effort_ultra: 'Ultra',
+      settingsAdvanced: 'Advanced settings', settingsRange: 'Enter a value from {min} to {max}', "settingsValidationError": "Some changes need attention before they can apply", settingsHeartbeatError: 'The heartbeat interval must be less than half the write-lease duration.', settingsPresetError: 'Select an enabled worker and an allowed DSH preset.', settingsPresetReferenceError: 'Remove unavailable presets and check the default worker mode.', settingsPolicyNameError: 'Policy names are required and must be unique.', settingsRequired: 'This field is required.', settingsPolicyReferenceError: 'Choose a model policy for the selected worker.', settingsAddPolicy: 'Add model policy', settingsRemovePolicy: 'Remove model policy', settingsWorkerType: 'Worker type', settingsDshPreset: 'DSH preset', settingsCapabilities: 'Required capabilities', settingsCapabilitiesHint: 'Comma-separated', settingsPolicy: 'Model policy', settingsPolicyName: 'Policy name', settingsProvider: 'Model provider ID', settingsModel: 'Model ID', settingsEffort: 'Reasoning effort', settingsDefaultEffort: 'Use default', settingsNoPolicy: 'None', settingsUnnamedPolicy: 'Unnamed policy', modelPoliciesHint: 'Choose models for background analysis or individual workers; each reference must match the worker type.', dshPresetsHint: 'Choose which Agent presets DSH workers may use.', workerDsh: 'DSH worker', workerCodex: 'Codex worker', presetUnavailable: 'This preset is unavailable. Clear its checkbox to remove it.', preset_standard: 'Standard mode', preset_cordis: 'Creator mode', preset_ptc: 'PTC mode', preset_minimal: 'Minimal mode', presetDescription_standard: 'Suitable for most tasks, with search, editing, and terminal tools available as needed.', presetDescription_cordis: 'Create and configure DSH plugins, tools, presets, and interfaces.', presetDescription_ptc: 'Batch tool calls and filter, organize, deduplicate, or summarize results.', presetDescription_minimal: 'A small tool set for testing and comparing basic performance.', presetDescriptionCustom: 'Custom Agent preset.', effort_none: 'Off', effort_minimal: 'Minimal', effort_low: 'Low', effort_medium: 'Medium', effort_high: 'High', effort_xhigh: 'Extra high', effort_max: 'Max', effort_ultra: 'Ultra',
 
       evaluation: 'Quality and usage', criterionRate: 'Acceptance criterion pass rate', verifiedExecutions: 'Executions passing all criteria', evaluationScope: 'Current criterion definitions per execution; unsubmitted results count as pending.',
       noSamples: 'No samples', executionSamples: 'Executions / latency samples', latency: 'Execution latency P50 / P95 (seconds)', tokenReports: 'Native usage records', costUnavailable: 'Cost unavailable: model prices are not supplied. Native Codex totals may span turns and are not summed as per-execution costs.', failedAcceptance: 'Failed',
@@ -1046,7 +1071,6 @@ window.__ModuleLoader__.load({
       analysisInputChars: 'Input character limit',
       analysisOutputChars: 'Output character limit',
       "semanticRoutingEnabled": "Use a model for task associations",
-      workerRules: 'Worker rules',
       modelPolicies: 'Model policies',
 
       meta: { title: 'Personal assistant', description: 'Send requests to the personal assistant and manage top-level tasks.' },
@@ -1060,7 +1084,7 @@ window.__ModuleLoader__.load({
       settingsNav: 'Personal assistant settings', "settingsTitle": "Private assistant settings", historyGroup: 'History sync', historyStartupEnabled: 'Sync history at startup', historyPeriodicEnabled: 'Sync history periodically',
       memoryTitle: 'Memory system', memorySearchLabel: 'Search memory content', memoryType: 'Data type', memoryState: 'Memory state', memorySource: 'Source system', memoryFrom: 'From', memoryTo: 'To', memoryAll: 'All types', memoryExperience: 'Experience archive', memoryRecord: 'Memory record', memoryEntity: 'Entity', memoryRelation: 'Relation', memoryTask: 'Task', memoryAnyState: 'All states', memoryAnySource: 'All sources', memorySearch: 'Search', memoryReset: 'Reset filters', memoryNoResults: 'No matching records', memoryDetails: 'Record details', memorySources: 'Supporting sources', memoryRelations: 'Related records', memoryContent: 'Content', memoryEntityName: 'Entity name', memoryEntityTags: 'Tags (comma separated)', memoryEntityAliases: 'Aliases (comma separated)', memoryEntityAttributes: 'Attributes', memoryAddAttribute: 'Add attribute', memoryAttributeKey: 'Attribute name', memoryAttributeValue: 'Attribute value', memorySave: 'Save changes', memoryConfirm: 'Confirm candidate', memoryRetract: 'Retract', memoryDelete: 'Delete', memoryDeleteConfirm: 'Delete this memory record?', memoryDeleteEntityConfirm: 'Delete this entity and its relations?', memoryDeleteExperienceConfirm: 'Delete this local experience mirror? The upstream session is kept.', memoryRebuild: 'Rebuild search indexes', memoryRetry: 'Retry failed extraction', memoryRun: 'Extract now', memoryOperationDone: 'Operation completed', memoryExtractionStarted: 'Memory extraction started. View progress in the assistant execution records.', memoryOperationError: 'Operation failed', memoryIndex: 'Index status', memoryBusy: 'Working…', memoryQuote: 'Source',
       memoryKind: 'Memory kind', memoryPredicate: 'Relationship predicate', memoryObject: 'Object JSON', memoryScope: 'Scope JSON', memoryValidFrom: 'Valid from', memoryValidTo: 'Valid to', memoryRelationLabel: 'Relationship label', memoryEntityType: 'Entity type', memoryExperienceNote: 'Local note', memoryAssociatedEntities: 'Related entities', memoryLoadMore: 'Load more', memoryTaskDeleteConfirm: 'Delete this task? Tasks with executions or operational references cannot be deleted.', memoryDeleteRelationConfirm: 'Delete this relationship and its assertion?',
-      workerGroup: 'Worker settings', dshWorkerEnabled: 'Enable DSH worker', codexWorkerEnabled: 'Enable Codex history sync and worker', dshPresets: 'Allowed DSH presets', defaultPreset: 'Default DSH preset', workerBudget: 'Worker time budget', routeThreshold: 'Resume route threshold',
+      workerMigrationWarning:'Some old rules could not be converted: {items}. The previous settings are retained; review the default and model policies.', workerReadiness:'Codex execution status', workerConnectionOff:'Connection disabled', workerNewOff:'New thread permission disabled', workerResumeOff:'Resume permission disabled', workerReady:'Connected and ready for tasks', workerConnecting:'Connecting to Codex…', workerDisconnected:'Enabled, not connected', workerConnectionFailed:'Connection or recovery failed. Check Codex and retry.', workerReconnect:'Reconnect Codex', workerGroup: 'Worker settings', dshWorkerEnabled: 'Enable DSH worker', codexWorkerEnabled: 'Enable Codex history sync and worker', dshPresets: 'Allowed DSH presets', defaultWorkerPriority:'Default worker priority', defaultWorkerPriorityHint:'The model selects creation mode for DSH plugin work. Other new tasks use this default. Existing tasks keep their original session.', workerPriorityStandard:'DSH · Standard', workerPriorityCordis:'DSH · Creation', routeCandidateLimit:'Execution candidates per page', workerBudget: 'Worker time budget', routeThreshold: 'Resume route threshold',
       codexGroup: 'Codex', codexEnabling: 'Syncing Codex history and enabling the worker…', codexDisabling: 'Cleaning Codex history and disabling the worker…', codexEnabledResult: 'Codex history sync and worker are enabled.', codexDisabledResult: 'Codex is disabled; removable local history records were cleared.',
       syncInterval: 'Sync interval', retentionDays: 'Default query days', batchSize: 'Records per batch', batchTime: 'Batch time budget',
       readBuffer: 'Read buffer', importLimit: 'Sync limit per run', recordLimit: 'Maximum record size', inboxGroup: 'Inbox recovery',
@@ -1096,7 +1120,7 @@ html[data-pac-assistant-session] [data-pac-hidden-context="true"]{display:none!i
 .pac-settings-icon{width:32px;height:32px;min-width:32px;padding:0!important;border-radius:var(--dsw-radius-sm)!important}.pac-settings-icon svg{width:16px;height:16px}.pac-spin{animation:pac-settings-spin .8s linear infinite}@keyframes pac-settings-spin{to{transform:rotate(360deg)}}.pac-settings-loading{display:flex;align-items:center;justify-content:center}
 .pac-settings-group,.pac-job-overview{min-inline-size:0;margin:0 auto 14px;border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 65%,transparent)}.pac-settings-group-heading,.pac-job-overview>summary{display:flex;align-items:center;gap:16px;padding:15px 18px;cursor:pointer;list-style:none;border-radius:inherit}.pac-settings-group-heading::-webkit-details-marker,.pac-job-overview>summary::-webkit-details-marker,.pac-settings-advanced>summary::-webkit-details-marker{display:none}@media(hover:hover){.pac-settings-group-heading:hover,.pac-job-overview>summary:hover{background:var(--dsw-alias-interactive-bg-hover)}}.pac-settings-group-heading:focus-visible,.pac-job-overview>summary:focus-visible,.pac-settings-advanced>summary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}.pac-settings-group-copy{display:grid;gap:4px;min-width:0;flex:1}.pac-settings-group-title{font-size:14px;font-weight:500;line-height:21px}.pac-settings-group-description{font-size:12px;line-height:19px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}.pac-settings-group-chevron{flex:none;color:inherit;transition:transform .15s}.pac-settings-group[open]>.pac-settings-group-heading .pac-settings-group-chevron{transform:rotate(90deg)}.pac-settings-group[open]>.pac-settings-group-heading{border-radius:var(--dsw-radius-md) var(--dsw-radius-md) 0 0;border-bottom:0.5px solid var(--dsw-alias-border-l1)}.pac-settings-group-body{padding:4px 18px 14px;min-width:0}
 .pac-job-overview>summary{min-height:48px;font-size:13px;font-weight:500}.pac-job-count{margin-left:auto;min-width:24px;padding:1px 6px;background:var(--dsw-alias-interactive-bg-hover);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);font-size:11px;text-align:center}.pac-job-table{margin:0 18px;border-top:0.5px solid var(--dsw-alias-border-l1)}.pac-job-row{display:grid;grid-template-columns:8px minmax(95px,1fr) minmax(70px,.65fr) repeat(2,minmax(110px,1fr));align-items:center;gap:8px 12px;min-height:40px;padding:8px 0;border-bottom:0.5px solid var(--dsw-alias-border-l1);font-size:11px}.pac-job-row:last-child{border-bottom:0}.pac-job-indicator{width:6px;height:6px;border-radius:50%;corner-shape:round;background:var(--dsw-alias-label-tertiary)}.pac-job-indicator.is-enabled{background:var(--dsw-alias-state-success-primary)}.pac-job-indicator.is-running{background:var(--dsw-alias-brand-primary)}.pac-job-name{min-width:0;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}.pac-job-state,.pac-job-time{min-width:0;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}.pac-job-error{grid-column:2/-1;color:var(--dsw-alias-state-error-primary);overflow-wrap:anywhere}.pac-settings-progress{display:flex;flex-wrap:wrap;gap:4px 18px;padding:9px 18px 14px;color:var(--dsw-alias-label-secondary);font-size:11px}
-.pac-settings-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,210px);align-items:center;gap:8px 24px;min-height:54px;padding:12px 0;border-bottom:0.5px solid var(--dsw-alias-border-l1)}.pac-settings-label{min-width:0;font-size:13px;line-height:20px;overflow-wrap:anywhere}.pac-settings-hint{display:block;margin-top:4px!important;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:19px;font-weight:400;overflow-wrap:anywhere}.pac-settings-control{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px}.pac-settings-control input,.pac-settings-compact-field input,.pac-settings-compact-field select,.pac-settings-select{width:100%;min-width:0;height:34px;border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);padding:6px 10px;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px}.pac-settings-control input{max-width:120px;text-align:right;font-variant-numeric:tabular-nums}@media(hover:hover){.pac-settings-control input:hover,.pac-settings-select:hover{background:var(--dsw-alias-interactive-bg-hover)}}.pac-settings-control input:focus-visible,.pac-settings-compact-field input:focus-visible,.pac-settings-compact-field select:focus-visible,.pac-settings-select:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}.pac-settings-control input[aria-invalid=true],.pac-settings-compact-field input[aria-invalid=true],.pac-settings-select[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary)}.pac-settings-unit{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px}.pac-settings-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:54px;padding:12px 0;border-bottom:0.5px solid var(--dsw-alias-border-l1)}.pac-settings-toggle-row> :last-child{flex-shrink:0}.pac-settings-group-body>.pac-settings-row:last-child,.pac-settings-group-body>.pac-settings-toggle-row:last-child{border-bottom:0}
+.pac-settings-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,210px);align-items:center;gap:8px 24px;min-height:54px;padding:12px 0;border-bottom:0.5px solid var(--dsw-alias-border-l1)}.pac-settings-label{min-width:0;font-size:13px;line-height:20px;overflow-wrap:anywhere}.pac-settings-hint{display:block;margin-top:4px!important;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:19px;font-weight:400;overflow-wrap:anywhere}.pac-settings-control{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px}.pac-settings-row>input,.pac-settings-control input,.pac-settings-compact-field input,.pac-settings-compact-field select,.pac-settings-select{width:100%;min-width:0;height:34px;border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);padding:6px 10px;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px}.pac-settings-control input{max-width:120px;text-align:right;font-variant-numeric:tabular-nums}@media(hover:hover){.pac-settings-row>input:hover,.pac-settings-control input:hover,.pac-settings-select:hover{background:var(--dsw-alias-interactive-bg-hover)}}.pac-settings-row>input:focus-visible,.pac-settings-control input:focus-visible,.pac-settings-compact-field input:focus-visible,.pac-settings-compact-field select:focus-visible,.pac-settings-select:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}.pac-settings-row>input[aria-invalid=true],.pac-settings-control input[aria-invalid=true],.pac-settings-compact-field input[aria-invalid=true],.pac-settings-select[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary)}.pac-settings-unit{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px}.pac-settings-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:54px;padding:12px 0;border-bottom:0.5px solid var(--dsw-alias-border-l1)}.pac-settings-toggle-row> :last-child{flex-shrink:0}.pac-settings-group-body>.pac-settings-row:last-child,.pac-settings-group-body>.pac-settings-toggle-row:last-child{border-bottom:0}
 .pac-settings-select{display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;cursor:pointer}.pac-settings-select span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pac-settings-select svg{flex:none;color:inherit}.pac-settings-advanced{margin-top:12px;border-top:0.5px solid var(--dsw-alias-border-l1)}.pac-settings-advanced>summary{display:flex;align-items:center;gap:7px;min-height:38px;padding:6px 0;cursor:pointer;list-style:none;font-size:12px;color:var(--dsw-alias-label-secondary)}@media(hover:hover){.pac-settings-advanced>summary:hover{color:var(--dsw-alias-label-primary)}}.pac-settings-advanced>summary svg{flex:none;transition:transform .15s}.pac-settings-advanced[open]>summary svg{transform:rotate(90deg)}.pac-settings-advanced-block{min-width:0;margin:16px 0 8px}.pac-settings-subhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:0 0 12px}.pac-settings-subhead>div{min-width:0}.pac-settings-subhead h3{font-size:13px;font-weight:500}.pac-settings-subhead p{margin-top:4px!important;color:var(--dsw-alias-label-secondary);font-size:12px;overflow-wrap:anywhere}.pac-settings-structured-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) 32px;align-items:end;gap:12px;padding:14px;margin-bottom:10px;border:0.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base)}.pac-settings-compact-field{display:grid;gap:5px;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px}.pac-settings-structured-row>.pac-settings-icon{grid-column:3;grid-row:1;align-self:end}.pac-settings-compact-field:nth-child(odd){grid-column:1}.pac-settings-compact-field:nth-child(even){grid-column:2}.pac-settings-compact-field input,.pac-settings-compact-field select{width:100%;text-align:left}.pac-settings-preset-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0 0 12px}.pac-settings-preset{display:grid;gap:4px;min-width:0;padding:10px;border:0.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base)}.pac-settings-preset:has(input:checked){border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 40%,var(--dsw-alias-border-l1))}.pac-settings-preset-description{padding-left:28px;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:18px;overflow-wrap:anywhere}.pac-settings-preset.is-unavailable{color:var(--dsw-alias-state-error-primary)}.pac-settings-field-error{grid-column:1/-1;color:var(--dsw-alias-state-error-primary);font-size:12px;overflow-wrap:anywhere}.pac-settings-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.pac-settings-status{font-size:12px;color:var(--dsw-alias-label-secondary);padding:6px 0;overflow-wrap:anywhere}.pac-settings-status.error{color:var(--dsw-alias-state-error-primary)}.pac-settings-footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:12px 0}.pac-settings-footer p{flex:1;min-width:180px}
 .pac-wechat{min-width:0;padding-top:12px}.pac-wechat-action{font-size:12px}.pac-wechat p{margin:8px 0}.pac-wechat-id{overflow-wrap:anywhere}.pac-wechat-qr{display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px 0}.pac-wechat-qr img{max-width:100%;height:auto;background:white;border-radius:var(--dsw-radius-sm)}.pac-wechat-queue-row{padding:12px 0;border-bottom:0.5px solid var(--dsw-alias-border-l1);overflow-wrap:anywhere}.pac-wechat-queue-row p{white-space:pre-wrap;max-height:180px;overflow:auto;margin:8px 0}
 @container(max-width:600px){.pac-settings-row{grid-template-columns:minmax(0,1fr) minmax(115px,36%);gap:10px 16px}.pac-job-row{grid-template-columns:6px minmax(0,1fr) auto}.pac-job-state{grid-column:3;grid-row:1}.pac-job-time,.pac-job-error{grid-column:2/-1}.pac-settings-preset-list{grid-template-columns:minmax(0,1fr)}}
@@ -1306,6 +1330,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
       analysisBudgetMs: ['analysisBudgetMs', 'second', 1000, .001, 3600],
       analysisInputChars: ['analysisInputChars', 'characters', 1, 1000, 1000000],
       analysisOutputChars: ['analysisOutputChars', 'characters', 1, 1000, 100000],
+      routeCandidateLimit:['routeCandidateLimit','records',1,1,200],
       workerBudgetMs: ['workerBudget', 'minute', 60_000, 1/60_000, 1440],
       routeResumeThreshold: ['routeThreshold', '', 1, 0, 1],
       routeAmbiguityGap: ['routeAmbiguityGap', '', 1, 0, 1],
@@ -1334,7 +1359,8 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
       const draft = { ...settings };
       for (const [key, [, , divisor]] of Object.entries(settingUnits)) draft[key] = settings[key] / divisor;
       draft.backgroundModelPolicy = settings.backgroundModelPolicy ?? '';
-      draft.workerRules = settings.workerRules.map((rule, index) => ({ ...rule, keywords: [...rule.keywords], capabilities: [...rule.capabilities], _keywordsText: rule.keywords.join(', '), _capabilitiesText: rule.capabilities.join(', '), _key: `rule-${index}` }));
+      draft.workerModelPolicies = { ...settings.workerModelPolicies };
+      draft.workerCapabilities = { ...settings.workerCapabilities };
       draft.modelPolicies = Object.entries(settings.modelPolicies).map(([name, policy], index) => ({ ...policy, name, _key: `policy-${index}` }));
       draft.dshWorkerPresets = [...settings.dshWorkerPresets];
       return draft;
@@ -1345,14 +1371,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
       for (const [key, [, , multiplier]] of Object.entries(settingUnits)) settings[key] = ['routeResumeThreshold','routeAmbiguityGap'].includes(key) ? Number(draft[key]) : Math.round(Number(draft[key]) * multiplier);
       const policyNames = new Map(draft.modelPolicies.map(policy => [policy.name, policy.name.trim()]));
       settings.backgroundModelPolicy = policyNames.get(draft.backgroundModelPolicy) || null;
-      settings.workerRules = draft.workerRules.map(({ _key, _keywordsText, _capabilitiesText, modelPolicy, agentPreset, ...rule }) => ({
-        ...rule,
-        id: rule.id.trim(),
-        keywords: _keywordsText === undefined ? rule.keywords : _keywordsText.split(',').map(value => value.trim()).filter(Boolean),
-        capabilities: _capabilitiesText === undefined ? rule.capabilities : _capabilitiesText.split(',').map(value => value.trim()).filter(Boolean),
-        ...(modelPolicy ? { modelPolicy: policyNames.get(modelPolicy) || modelPolicy } : {}),
-        ...(rule.worker === 'dsh_subagent' && agentPreset ? { agentPreset } : {}),
-      }));
+      settings.workerModelPolicies = Object.fromEntries(Object.entries(draft.workerModelPolicies).map(([key,name]) => [key, policyNames.get(name) || name]));
       settings.modelPolicies = Object.fromEntries(draft.modelPolicies.map(({ _key, name, ...policy }) => [name.trim(), {
         ...policy,
         effort: policy.effort || undefined,
@@ -1366,6 +1385,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
 
     function settingsErrors(draft, t, presets = [], validatePresetAvailability = true) {
       const errors = {};
+      if (!draft.mainSessionTitle?.trim() || new TextEncoder().encode(draft.mainSessionTitle.trim()).length > 48) errors.mainSessionTitle = t('mainSessionTitleError');
       for (const [key, [label, unit, multiplier, min, max]] of Object.entries(settingUnits)) {
         const value = draft[key];
         if (value === '' || !Number.isFinite(Number(value)) || Number(value) < min || Number(value) > max || (multiplier === 1 && !['routeResumeThreshold','routeAmbiguityGap'].includes(key) && !Number.isSafeInteger(Number(value)))) {
@@ -1375,7 +1395,8 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         }
       }
       if (Number(draft.workerHeartbeatMs) * 2 >= Number(draft.leaseTtlMs)) errors.workerHeartbeatMs = t('settingsHeartbeatError');
-      if (!draft.dshWorkerPresets.length || !draft.dshWorkerPresets.includes(draft.defaultDshPreset)) errors.defaultDshPreset = t('settingsPresetError');
+      const defaultPreset = { dsh_standard:'standard', dsh_cordis:'cordis' }[draft.defaultWorkerPriority];
+      if (!['dsh_standard','dsh_cordis','codex'].includes(draft.defaultWorkerPriority) || defaultPreset && !draft.dshWorkerPresets.includes(defaultPreset) || draft.defaultWorkerPriority==='codex' && !draft.codexWorkerEnabled) errors.defaultWorkerPriority = t('settingsPresetError');
       for (const preset of validatePresetAvailability ? draft.dshWorkerPresets : []) if (!presets.some(item => item.id === preset && !item.broken)) errors.dshWorkerPresets = t('settingsPresetReferenceError');
       const names = draft.modelPolicies.map(policy => policy.name.trim());
       for (const policy of draft.modelPolicies) {
@@ -1385,13 +1406,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
       }
       const policyFor = name => draft.modelPolicies.find(policy => policy.name === name);
       if (draft.backgroundModelPolicy && policyFor(draft.backgroundModelPolicy)?.worker !== 'dsh_subagent') errors.backgroundModelPolicy = t('settingsPolicyReferenceError');
-      const ids = draft.workerRules.map(rule => rule.id.trim());
-      if (!ids.length || ids.length > 32) errors.workerRules = t('settingsRuleCountError');
-      for (const rule of draft.workerRules) {
-        if (!rule.id.trim() || ids.filter(id => id === rule.id.trim()).length > 1) errors[`rule-${rule._key}-id`] = t('settingsRuleNameError');
-        if (rule.modelPolicy && policyFor(rule.modelPolicy)?.worker !== rule.worker) errors[`rule-${rule._key}-modelPolicy`] = t('settingsPolicyReferenceError');
-        if (rule.worker === 'dsh_subagent' && !draft.dshWorkerPresets.includes(rule.agentPreset || draft.defaultDshPreset)) errors[`rule-${rule._key}-agentPreset`] = t('settingsPresetReferenceError');
-      }
+      for (const [priority,name] of Object.entries(draft.workerModelPolicies)) if (name && policyFor(name)?.worker !== (priority==='codex'?'codex':'dsh_subagent')) errors.workerModelPolicies=t('settingsPolicyReferenceError');
       return errors;
     }
 
@@ -1448,7 +1463,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
       const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
       const publish = patch => { if (!disposed) { state = { ...state, ...patch }; listeners.forEach(listener => listener()); } };
       const linked = [
-        ['dshWorkerPresets', 'defaultDshPreset', 'workerRules', 'modelPolicies', 'backgroundModelPolicy'],
+        ['dshWorkerPresets', 'defaultWorkerPriority', 'workerModelPolicies', 'modelPolicies', 'backgroundModelPolicy'],
         ['leaseTtlMs', 'workerHeartbeatMs'],
       ];
       const changes = () => {
@@ -1531,8 +1546,8 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         active = Promise.resolve().then(async () => {
         try {
           const response = await requestCodexToggle(enabled);
-          committed = { ...committed, codexWorkerEnabled: response.settings.codexWorkerEnabled };
-          publish({ status: response, draft: { ...state.draft, codexWorkerEnabled: response.settings.codexWorkerEnabled },
+          committed = { ...committed, codexWorkerEnabled: response.settings.codexWorkerEnabled, defaultWorkerPriority:response.settings.defaultWorkerPriority };
+          publish({ status: response, draft: { ...state.draft, codexWorkerEnabled: response.settings.codexWorkerEnabled, defaultWorkerPriority:response.settings.defaultWorkerPriority },
             codexMessage: t(enabled ? 'codexEnabledResult' : 'codexDisabledResult') });
         } catch (failure) { publish({ codexError: String(failure?.message || failure || t('settingsSaveError')) }); }
         finally { active = null; publish({ codexBusy: null }); if (!disposed && !state.error) void flush(); }
@@ -1645,20 +1660,89 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         error ? h('p', { className: 'pac-settings-status error', role: 'alert' }, error) : null);
     }
 
-    function SettingsSection({ t, ctx, close, settings }) {
+    /** Keep an accepted reset and its polling alive when the settings page closes. */
+    function createMainSessionResetController(host, t) {
+      let state = { view: null, loading: false, error: '' };
+      let pending = null, timer = null, disposed = false, paused = false;
+      const lifetime = new AbortController(), listeners = new Set();
+      const publish = patch => { if (!disposed) { state = { ...state, ...patch }; listeners.forEach(listener => listener()); } };
+      const request = async body => responseJson(await fetch('/api/personal-agent/session/reset', {
+        method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', signal: lifetime.signal,
+        headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {})
+      }));
+      const apply = async view => {
+        if (disposed) return;
+        publish({ view, error: '' });
+        if (view.running) { paused = true; host.suspend(); }
+        else if (paused) { paused = false; await host.resume(); }
+      };
+      const run = operation => {
+        if (pending || disposed) return pending;
+        clearTimeout(timer); timer = null;
+        publish({ loading: true, error: '' });
+        pending = Promise.resolve().then(operation).catch(error => { publish({ error: String(error?.message || error) }); }).finally(() => {
+          pending = null;
+          publish({ loading: false });
+          if (!disposed && state.view?.running) timer = setTimeout(load, 1000);
+        });
+        return pending;
+      };
+      const load = () => run(async () => { await apply(await request()); });
+      return {
+        load,
+        start() {
+          if (pending || state.view?.running || !state.view?.sessionId || state.error || !window.confirm(t('mainSessionClearConfirm'))) return;
+          const expectedSessionId = state.view.sessionId;
+          return run(async () => {
+            paused = true; host.suspend();
+            try { await apply(await request({ confirmed: true, expectedSessionId })); }
+            catch (error) {
+              // A lost response can follow a committed reset; read its durable status before enabling the conversation.
+              await apply(await request());
+              if (state.view?.oldSessionId !== expectedSessionId || state.view?.state !== 'succeeded' && !state.view?.running) throw error;
+            }
+          });
+        },
+        subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+        getSnapshot() { return state; },
+        dispose() { disposed = true; clearTimeout(timer); lifetime.abort(); listeners.clear(); }
+      };
+    }
+
+    function MainSessionControls({ t, reset, settings, title, invalid, disabled }) {
+      const { view, loading, error } = React.useSyncExternalStore(reset.subscribe, reset.getSnapshot);
+      React.useEffect(() => { void reset.load(); }, [reset]);
+      const busy = loading || view?.running;
+      const id = React.useId();
+      return h('div', null,
+        h('div', { className: 'pac-settings-row' },
+          h('label', { className: 'pac-settings-label', htmlFor: id }, t('mainSessionTitle')),
+          h('input', { id, value: title, disabled: disabled || busy, 'aria-invalid': !!invalid, 'aria-describedby': `${id}-hint`, onChange: event => settings.edit({ mainSessionTitle: event.currentTarget.value }) })),
+        h('p', { id: `${id}-hint`, className: 'pac-settings-description' }, t('mainSessionTitleHint')),
+        invalid ? h('p', { className: 'pac-settings-field-error', role: 'alert' }, invalid) : null,
+        h('p', { className: 'pac-settings-description' }, t('mainSessionClearHint')),
+        h('div', { className: 'pac-settings-actions' },
+          h(Button, { size: 'sm', variant: 'outline', type: 'button', disabled: disabled || busy || !!invalid || !view?.sessionId || !!error, onClick: async () => { await settings.flush(); if (settings.getSnapshot().saveState === 'error') return; return reset.start(); } }, t(view?.running ? 'mainSessionClearing' : 'mainSessionClear')),
+          error ? h(Button, { size: 'sm', variant: 'outline', type: 'button', disabled: loading, onClick: reset.load }, t('settingsRetry')) : null),
+        view?.running ? h('p', { className: 'pac-settings-status', role: 'status' }, t({ draining: 'mainSessionClearDraining', syncing: 'mainSessionClearSyncing', creating: 'mainSessionClearCreating' }[view.phase] || 'mainSessionClearing')) : null,
+        view?.state === 'succeeded' && !view.running ? h('p', { className: 'pac-settings-status', role: 'status' }, t('mainSessionCleared')) : null,
+        error || view?.lastError || view?.channelError ? h('p', { className: 'pac-settings-status error', role: 'alert' }, error || view.lastError || view.channelError) : null);
+    }
+
+    function SettingsSection({ t, ctx, close, settings, reset }) {
       const { status, draft, defaults, loading, saving, refreshingJobs, codexBusy, codexError, codexMessage, error, formErrors, saveState, expanded } = React.useSyncExternalStore(settings.subscribe, settings.getSnapshot);
       const rowSequence = React.useRef(0);
       const idPrefix = React.useId();
       React.useEffect(() => { void settings.load(); return () => { void settings.flush(); }; }, [settings]);
-      const update = (key, value) => settings.edit({ [key]: value }, typeof value === 'boolean' || ['defaultLanguage','defaultDshPreset','backgroundModelPolicy'].includes(key));
-      const updateRule = (ruleKey, patch) => settings.edit(current => ({ ...current, workerRules: current.workerRules.map(rule => rule._key === ruleKey ? { ...rule, ...patch } : rule) }), ['worker','agentPreset','modelPolicy'].some(key => key in patch));
+      const update = (key, value) => settings.edit({ [key]: value }, typeof value === 'boolean' || ['defaultLanguage','defaultWorkerPriority','backgroundModelPolicy'].includes(key));
       const updatePolicy = (policyKey, patch) => settings.edit(current => ({ ...current, modelPolicies: current.modelPolicies.map(policy => policy._key === policyKey ? { ...policy, ...patch } : policy) }), 'effort' in patch);
       const nextRowKey = prefix => `${prefix}-${idPrefix}-${rowSequence.current++}`;
       const changePolicyWorker = (policyKey, worker) => settings.edit(current => {
         const policy = current.modelPolicies.find(item => item._key === policyKey);
         return { ...current,
           modelPolicies: current.modelPolicies.map(item => item._key === policyKey ? { ...item, worker, provider: worker === 'codex' ? '' : item.provider } : item),
-          workerRules: current.workerRules.map(rule => rule.modelPolicy === policy.name ? { ...rule, worker, agentPreset: worker === 'dsh_subagent' ? rule.agentPreset || current.defaultDshPreset : undefined } : rule),
+          workerModelPolicies: Object.fromEntries(Object.entries(current.workerModelPolicies).map(([key,name]) => [key,name===policy.name?'':name])),
           backgroundModelPolicy: worker === 'codex' && current.backgroundModelPolicy === policy.name ? '' : current.backgroundModelPolicy,
         };
       }, true);
@@ -1666,7 +1750,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         const policy = current.modelPolicies.find(item => item._key === policyKey);
         return { ...current,
           modelPolicies: current.modelPolicies.map(item => item._key === policyKey ? { ...item, name } : item),
-          workerRules: current.workerRules.map(rule => rule.modelPolicy === policy.name ? { ...rule, modelPolicy: name } : rule),
+          workerModelPolicies: Object.fromEntries(Object.entries(current.workerModelPolicies).map(([key,value]) => [key,value===policy.name?name:value])),
           backgroundModelPolicy: current.backgroundModelPolicy === policy.name ? name : current.backgroundModelPolicy,
         };
       });
@@ -1674,17 +1758,13 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         const policy = current.modelPolicies.find(item => item._key === policyKey);
         return { ...current,
           modelPolicies: current.modelPolicies.filter(item => item._key !== policyKey),
-          workerRules: current.workerRules.map(rule => rule.modelPolicy === policy.name ? { ...rule, modelPolicy: undefined } : rule),
+          workerModelPolicies: Object.fromEntries(Object.entries(current.workerModelPolicies).map(([key,value]) => [key,value===policy.name?'':value])),
           backgroundModelPolicy: current.backgroundModelPolicy === policy.name ? '' : current.backgroundModelPolicy,
         };
       }, true);
-      const updatePresets = nextPresets => settings.edit(current => {
-        const fallback = nextPresets.includes(current.defaultDshPreset) ? current.defaultDshPreset : nextPresets[0];
-        return { ...current, dshWorkerPresets: nextPresets, defaultDshPreset: fallback,
-          workerRules: current.workerRules.map(rule => rule.worker === 'dsh_subagent' && !nextPresets.includes(rule.agentPreset || current.defaultDshPreset) ? { ...rule, agentPreset: fallback } : rule),
-        };
-      }, true);
+      const updatePresets = nextPresets => settings.edit(current => ({ ...current, dshWorkerPresets:nextPresets }), true);
       const groups = [
+        { title: 'mainSessionGroup', fields: [], advanced: [] },
         { title: 'historyGroup', toggles: [['historyStartupSyncEnabled', 'historyStartupEnabled'], ['historyPeriodicSyncEnabled', 'historyPeriodicEnabled']], fields: ['importIntervalMs', 'historyRetentionDays'], advanced: ['historyBatchSize', 'historyBatchMs', 'historyReadBytes', 'maxImportFileBytes', 'maxHistoryRecordBytes'] },
         { title: 'inboxGroup', enabled: 'inboxRetryEnabled', enabledLabel: 'inboxEnabled', fields: ['inboxRetryIntervalMs'], advanced: ['inboxBatchSize','inboxRetryLimit','inboxRetryBudgetMs'] },
         { title: 'backupGroup', enabled: 'backupEnabled', enabledLabel: 'backupEnabled', fields: ['backupIntervalMs'], advanced: ['backupRetention'] },
@@ -1692,7 +1772,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         { title: 'cleanupGroup', enabled: 'cleanupEnabled', enabledLabel: 'cleanupEnabled', fields: ['cleanupIntervalMs', 'hotHistoryDays', 'candidateReviewDays', 'archiveCapacityBytes'], advanced: [] },
         { title: 'analysisGroup', toggles: [['semanticRoutingEnabled','semanticRoutingEnabled']], fields: [], advanced: ['analysisBudgetMs','analysisInputChars','analysisOutputChars','backgroundModelPolicy'] },
         { title: 'wechatGroup', toggles: [['wechatEnabled','wechatEnabled'], ['wechatSyncRepliesEnabled','wechatSyncRepliesEnabled'], ['wechatMirrorUserEnabled','wechatMirrorUserEnabled'], ['wechatRemoteApprovalEnabled','wechatRemoteApprovalEnabled']], fields: [], advanced: ['wechatRequestTimeoutMs','wechatPollTimeoutMs','wechatBackoffMaxMs','wechatMessageChars','wechatQueueCapacity','wechatRetentionDays','wechatInteractionTtlMs','wechatContextTtlMs','wechatSendBudget','wechatSendRetryLimit'] },
-        { title: 'workerGroup', toggles: [['dshWorkerEnabled', 'dshWorkerEnabled']], fields: [], advancedToggles: [['workerHeartbeatEnabled','workerHeartbeatEnabled']], advanced: ['workerBudgetMs', 'routeResumeThreshold','routeAmbiguityGap','leaseTtlMs','workerHeartbeatMs'] }
+        { title: 'workerGroup', toggles: [['dshWorkerEnabled', 'dshWorkerEnabled']], fields: [], advancedToggles: [['workerHeartbeatEnabled','workerHeartbeatEnabled']], advanced: ['workerBudgetMs', 'routeResumeThreshold','routeAmbiguityGap','routeCandidateLimit','leaseTtlMs','workerHeartbeatMs'] }
       ];
       if (loading || !status && !error) return h('div', { className: 'pac-settings pac-settings-loading', role: 'status', 'aria-label': t('settingsLoading') }, h(IconRefreshOutlineRegular, { size: 20, className: 'pac-spin' }));
       if (!draft) return h('div', { className: 'pac-settings' },
@@ -1727,19 +1807,6 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
           formErrors[key] ? h('p', { id: `${idPrefix}-${key}-error`, className: 'pac-settings-field-error', role: 'alert' }, formErrors[key]) : null);
       };
       const renderStructured = key => {
-        if (key === 'workerRules') return h('section', { className: 'pac-settings-advanced-block', key },
-          h('div', { className: 'pac-settings-subhead' }, h('div', null, h('h3', null, t('workerRules')), h('p', null, t('workerRulesHint'))),
-            h(SettingsIconAction, { label: t('settingsAddRule'), icon: IconPlusOutlineRegular, disabled: busy || draft.workerRules.length >= 32, onClick: () => update('workerRules', [...draft.workerRules, { id: `custom-${draft.workerRules.length + 1}`, worker: 'dsh_subagent', keywords: [], capabilities: [], agentPreset: draft.defaultDshPreset, _key: nextRowKey('rule') }]) })),
-          draft.workerRules.map(rule => h('div', { className: 'pac-settings-structured-row', key: rule._key },
-            h('label', { className: 'pac-settings-compact-field' }, h('span', null, t('settingsRuleName')), h('input', { value: rule.id, disabled: busy, 'aria-invalid': !!formErrors[`rule-${rule._key}-id`], onChange: event => updateRule(rule._key, { id: event.currentTarget.value }) })),
-            h('label', { className: 'pac-settings-compact-field' }, h('span', null, t('settingsWorkerType')), h(SettingsSelect, { label: t('settingsWorkerType'), value: rule.worker, options: workerOptions, disabled: busy, onChange: worker => updateRule(rule._key, { worker, ...(worker === 'dsh_subagent' ? { agentPreset: rule.agentPreset || draft.defaultDshPreset } : { agentPreset: undefined }) }) })),
-            rule.worker === 'dsh_subagent' ? h('label', { className: 'pac-settings-compact-field' }, h('span', null, t('settingsDshPreset')), h(SettingsSelect, { label: t('settingsDshPreset'), value: rule.agentPreset || draft.defaultDshPreset, options: presetOptions.filter(option => draft.dshWorkerPresets.includes(option.id) && !option.unavailable), disabled: busy, onChange: agentPreset => updateRule(rule._key, { agentPreset }) })) : null,
-            h('label', { className: 'pac-settings-compact-field' }, h('span', null, t('settingsKeywords')), h('input', { value: rule._keywordsText ?? rule.keywords.join(', '), disabled: busy, placeholder: t('settingsKeywordsHint'), onChange: event => updateRule(rule._key, { _keywordsText: event.currentTarget.value }) })),
-            h('label', { className: 'pac-settings-compact-field' }, h('span', null, t('settingsCapabilities')), h('input', { value: rule._capabilitiesText ?? rule.capabilities.join(', '), disabled: busy, placeholder: t('settingsCapabilitiesHint'), onChange: event => updateRule(rule._key, { _capabilitiesText: event.currentTarget.value }) })),
-            h('label', { className: 'pac-settings-compact-field' }, h('span', null, t('settingsPolicy')), h(SettingsSelect, { label: t('settingsPolicy'), value: rule.modelPolicy || '', options: policyOptionsFor(rule.worker, rule.modelPolicy), disabled: busy, onChange: modelPolicy => updateRule(rule._key, { modelPolicy: modelPolicy || undefined }) })),
-            h(SettingsIconAction, { label: t('settingsRemoveRule'), icon: IconTrashOutlineRegular, disabled: busy || draft.workerRules.length <= 1, onClick: () => update('workerRules', draft.workerRules.filter(value => value._key !== rule._key)) }),
-            ...['id','modelPolicy','agentPreset'].map(field => formErrors[`rule-${rule._key}-${field}`] ? h('p', { className: 'pac-settings-field-error', role: 'alert', key: field }, formErrors[`rule-${rule._key}-${field}`]) : null))),
-          formErrors.workerRules ? h('p', { className: 'pac-settings-field-error', role: 'alert' }, formErrors.workerRules) : null);
         if (key === 'modelPolicies') return h('section', { className: 'pac-settings-advanced-block', key },
           h('div', { className: 'pac-settings-subhead' }, h('div', null, h('h3', null, t('modelPolicies')), h('p', null, t('modelPoliciesHint'))),
             h(SettingsIconAction, { label: t('settingsAddPolicy'), icon: IconPlusOutlineRegular, disabled: busy, onClick: () => update('modelPolicies', [...draft.modelPolicies, { name: '', worker: 'dsh_subagent', provider: '', model: '', effort: '', _key: nextRowKey('policy') }]) })),
@@ -1760,12 +1827,14 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
               h(Checkbox, { checked, disabled: busy || option.unavailable && !checked || checked && !option.unavailable && selectedAvailablePresets.length === 1, label: presetLabel(option.id, t, presetRecords.find(item => item.id === option.id)), onChange: selected => updatePresets(selected ? [...draft.dshWorkerPresets, option.id] : draft.dshWorkerPresets.filter(id => id !== option.id)) }),
               h('span', { className: 'pac-settings-preset-description' }, option.description));
           })),
-          h('div', { className: 'pac-settings-row' }, h('label', { className: 'pac-settings-label', htmlFor: `${idPrefix}-defaultDshPreset` }, t('defaultPreset')), h(SettingsSelect, { id: `${idPrefix}-defaultDshPreset`, label: t('defaultPreset'), value: draft.defaultDshPreset, options: presetOptions.filter(option => draft.dshWorkerPresets.includes(option.id) && !option.unavailable), disabled: busy, invalid: !!formErrors.defaultDshPreset, onChange: value => update('defaultDshPreset', value) })),
+          h('div', { className:'pac-settings-row' }, h('div',null,h('label',{className:'pac-settings-label',htmlFor:`${idPrefix}-defaultWorkerPriority`},t('defaultWorkerPriority')),h('p',{className:'pac-settings-description',id:`${idPrefix}-workerPriorityHint`},t('defaultWorkerPriorityHint'))),
+            h(SettingsSelect,{id:`${idPrefix}-defaultWorkerPriority`,label:t('defaultWorkerPriority'),describedBy:`${idPrefix}-workerPriorityHint`,value:draft.defaultWorkerPriority,
+              options:[{id:'dsh_standard',label:t('workerPriorityStandard')},{id:'dsh_cordis',label:t('workerPriorityCordis')},...(draft.codexWorkerEnabled?[{id:'codex',label:'Codex'}]:[])],disabled:busy,invalid:!!formErrors.defaultWorkerPriority,onChange:value=>update('defaultWorkerPriority',value)})),
           formErrors.dshWorkerPresets ? h('p', { className: 'pac-settings-field-error', role: 'alert' }, formErrors.dshWorkerPresets) : null,
-          formErrors.defaultDshPreset ? h('p', { className: 'pac-settings-field-error', role: 'alert' }, formErrors.defaultDshPreset) : null);
+          formErrors.defaultWorkerPriority ? h('p', { className: 'pac-settings-field-error', role: 'alert' }, formErrors.defaultWorkerPriority) : null);
         return null;
       };
-      const jobs = (status?.jobs || []).filter(job => job.name !== 'memory-initialization');
+      const jobs = (status?.jobs || []).filter(job => !['memory-initialization', 'main-session-reset'].includes(job.name));
       const jobLabel = { history:'jobHistory', 'worker-heartbeat':'jobHeartbeat', inbox:'jobInbox', 'memory-extraction':'jobMemory', cleanup:'jobCleanup', backup:'jobBackup' };
       const progress = status?.progress ?? {};
       return h('div', { className: 'pac-settings', onBlurCapture: () => { void settings.flush(); } },
@@ -1788,7 +1857,12 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         groups.map(group => h('details', { className: 'pac-settings-group', key: group.title, open: expanded[group.title] ?? false, onToggle: event => settings.toggleSection(group.title, event.currentTarget.open) },
           h('summary', { className: 'pac-settings-group-heading' }, h('span', { className: 'pac-settings-group-copy' }, h('span', { className: 'pac-settings-group-title' }, t(group.title)), h('span', { className: 'pac-settings-group-description' }, t(`${group.title}Hint`))), h(IconChevronRightOutlineRegular, { size: 16, className: 'pac-settings-group-chevron' })),
           h('div', { className: 'pac-settings-group-body' },
+          group.title === 'mainSessionGroup' ? h(MainSessionControls, { t, reset, settings, title: draft.mainSessionTitle, invalid: formErrors.mainSessionTitle, disabled: busy || saving }) : null,
           group.title === 'workerGroup' ? h(React.Fragment, null,
+            status?.workerMigration?.warnings?.length ? h('p',{className:'pac-settings-status error',role:'status'},t('workerMigrationWarning').replace('{items}',status.workerMigration.warnings.join(', '))) : null,
+            draft.codexWorkerEnabled && status?.workers?.codex ? h('p',{className:'pac-settings-description'},t('workerReadiness'),': ',[!status.workers.codex.connectionEnabled&&t('workerConnectionOff'),!status.workers.codex.newEnabled&&t('workerNewOff'),!status.workers.codex.resumeEnabled&&t('workerResumeOff')].filter(Boolean).join(' · ')||t(status.workers.codex.connecting?'workerConnecting':status.workers.codex.connectionError?'workerConnectionFailed':status.workers.codex.connected?'workerReady':'workerDisconnected')) : null,
+            draft.codexWorkerEnabled && status?.workers?.codex?.connectionError ? h('p', {className:'pac-settings-status error',role:'alert'},status.workers.codex.connectionError) : null,
+            draft.codexWorkerEnabled && status?.workers?.codex && (!status.workers.codex.connected || status.workers.codex.connectionError) ? h('div', {className:'pac-settings-actions'}, h(Button, {size:'sm',variant:'outline',type:'button',disabled:busy || saving || status.workers.codex.connecting,onClick:()=>settings.toggleCodex(true)},t('workerReconnect'))) : null,
             h('div', { className: 'pac-settings-toggle-row' }, h('span', { className: 'pac-settings-label' }, t('codexWorkerEnabled'), h('span', { className: 'pac-settings-hint' }, t('codexWorkerHint'))), h(Switch, { checked: draft.codexWorkerEnabled, disabled: busy || saving, label: t('codexWorkerEnabled'), onChange: settings.toggleCodex })),
             codexBusy ? h('p', { className: 'pac-settings-status', role: 'status' }, t(codexBusy === 'enabling' ? 'codexEnabling' : 'codexDisabling')) : null,
             codexMessage ? h('p', { className: 'pac-settings-status', role: 'status' }, codexMessage) : null,
@@ -1808,7 +1882,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
             renderStructured('dshWorkerPresets'),
             h('details', { className: 'pac-settings-advanced' }, h('summary', null, h(IconChevronRightOutlineRegular, { size: 14 }), t('settingsAdvanced')),
               (group.advancedToggles ?? []).map(([key, label]) => h('div', { className: 'pac-settings-toggle-row', key }, renderLabel(key, label), h(Switch, { checked: draft[key], disabled: busy, label: t(label), onChange: value => update(key, value) }))),
-              group.advanced.map(renderField), renderStructured('workerRules'), renderStructured('modelPolicies'))) : null,
+              group.advanced.map(renderField), ...['dsh_standard','dsh_cordis','codex'].map(priority=>h('div',{className:'pac-settings-row',key:priority},h('label',{className:'pac-settings-label'},t({dsh_standard:'workerPriorityStandard',dsh_cordis:'workerPriorityCordis',codex:'codexWorkerEnabled'}[priority]),' · ',t('modelPolicies')),h(SettingsSelect,{label:t('modelPolicies'),value:draft.workerModelPolicies[priority]??'',options:policyOptionsFor(priority==='codex'?'codex':'dsh_subagent',draft.workerModelPolicies[priority]),disabled:busy,onChange:value=>update('workerModelPolicies',{...draft.workerModelPolicies,[priority]:value})}))), renderStructured('modelPolicies'))) : null,
           group.title === 'analysisGroup' ? h('details', { className: 'pac-settings-advanced' }, h('summary', null, h(IconChevronRightOutlineRegular, { size: 14 }), t('settingsAdvanced')),
             h('div', { className: 'pac-settings-row' }, renderLabel('backgroundModelPolicy', 'backgroundModelPolicy', `${idPrefix}-backgroundModelPolicy`),
               h(SettingsSelect, { id: `${idPrefix}-backgroundModelPolicy`, label: t('backgroundModelPolicy'), value: draft.backgroundModelPolicy, options: policyOptionsFor('dsh_subagent', draft.backgroundModelPolicy), disabled: busy, invalid: !!formErrors.backgroundModelPolicy, onChange: value => update('backgroundModelPolicy', value) })),
@@ -2292,12 +2366,14 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
       let pending = null;
       let retainedSessionId = null;
       let disposed = false;
+      let suspended = false;
       const listeners = new Set();
       const publish = patch => {
         state = { ...state, ...patch };
         listeners.forEach(listener => listener());
       };
       const ensure = () => {
+        if (disposed || suspended) return Promise.resolve(null);
         if (pending) return pending;
         publish({ loading: true, error: '' });
         pending = (async () => {
@@ -2313,13 +2389,14 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
           }
           const sessionId = canonical?.sessionId && canonical.agentPreset === 'standard' ? canonical.sessionId : null;
           if (!sessionId) throw new Error(t('contextUnavailable'));
+          if (disposed || suspended) return null;
           if (state.reference && retainedSessionId === sessionId) { publish({ loading: false, error: '' }); return state.reference; }
           state.reference?.release();
           publish({ reference: null });
           const reference = ctx.sessions.retain(sessionId, { source: 'personalAssistantMain' });
           try {
             await reference.ready;
-            if (disposed) {
+            if (disposed || suspended) {
               reference.release();
               return null;
             }
@@ -2331,13 +2408,25 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
             throw error;
           }
         })().catch(error => {
-          if (!disposed) publish({ loading: false, error: String(error?.message || error || t('contextUnavailable')) });
+          if (!disposed && !suspended) publish({ loading: false, error: String(error?.message || error || t('contextUnavailable')) });
           return null;
         }).finally(() => { pending = null; });
         return pending;
       };
       return {
         ensure,
+        suspend() {
+          suspended = true;
+          state.reference?.release();
+          retainedSessionId = null;
+          publish({ reference: null, loading: true, error: '' });
+        },
+        async resume() {
+          await pending;
+          if (disposed) return null;
+          suspended = false;
+          return ensure();
+        },
         subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
         getSnapshot() { return state; },
         dispose() {
@@ -2687,7 +2776,9 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         const store = createStore(ctx);
         const host = createAssistantSessionHost(ctx, t);
         const settings = createSettingsController(t);
+        const reset = createMainSessionResetController(host, t);
         ctx.effect(() => () => settings.dispose());
+        ctx.effect(() => () => reset.dispose());
         ctx.effect(() => store.start());
         ctx.effect(() => () => host.dispose());
         ctx.effect(() => {
@@ -2700,7 +2791,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .pac-sidebar-header{padding-
         ctx.effect(() => installAssistantContextVisibility());
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section', id: PANEL, order: 40, label: () => t('settingsNav'), locale: NS,
-          inject: () => ({ t, ctx, settings })
+          inject: () => ({ t, ctx, settings, reset })
         }, SettingsSection));
         ctx.slots.inject('main', () => ctx.slots.register({
           name: 'main', key: PANEL, locale: NS,

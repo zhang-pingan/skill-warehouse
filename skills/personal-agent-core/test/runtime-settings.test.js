@@ -18,18 +18,31 @@ test('runtime settings validate user-editable values and keep first-run Cordis d
   assert.equal(defaults.codexWorkerEnabled, false)
   assert.equal(defaults.dshWorkerEnabled, false)
   assert.deepEqual(defaults.dshWorkerPresets, ['standard', 'cordis'])
-  assert.equal(defaults.defaultDshPreset, 'cordis')
+  assert.equal(defaults.defaultWorkerPriority, 'dsh_cordis')
   assert.equal(defaults.workerBudgetMs, 60_000)
   assert.equal(defaults.routeResumeThreshold, 0.9)
   assert.throws(() => resolveRuntimeSettings({ backupRetention: 1 }, defaults), /backupRetention/)
   assert.throws(() => resolveRuntimeSettings({ inboxRetryEnabled: 'false' }, defaults), /inboxRetryEnabled/)
   assert.throws(() => resolveRuntimeSettings({ codexMutations: true }, defaults), /Unknown setting/)
-  assert.throws(() => resolveRuntimeSettings({ dshWorkerPresets: ['standard'], defaultDshPreset: 'cordis' }, defaults), /defaultDshPreset must be included/)
-  const changed = resolveRuntimeSettings({ historyStartupSyncEnabled: false, historyPeriodicSyncEnabled: true, dshWorkerEnabled: true, dshWorkerPresets: ['standard', 'ptc'], defaultDshPreset: 'ptc', workerBudgetMs: 90_000, routeResumeThreshold: 0.75 }, defaults)
+  assert.throws(() => resolveRuntimeSettings({ dshWorkerPresets: ['standard'], defaultWorkerPriority: 'dsh_cordis' }, defaults), /Default worker preset must be included/)
+  const changed = resolveRuntimeSettings({ historyStartupSyncEnabled: false, historyPeriodicSyncEnabled: true, dshWorkerEnabled: true, dshWorkerPresets: ['standard', 'cordis'], defaultWorkerPriority: 'dsh_standard', workerBudgetMs: 90_000, routeResumeThreshold: 0.75 }, defaults)
   assert.equal(changed.historyStartupSyncEnabled, false)
   assert.equal(changed.historyPeriodicSyncEnabled, true)
-  assert.equal(changed.defaultDshPreset, 'ptc')
+  assert.equal(changed.defaultWorkerPriority, 'dsh_standard')
   assert.equal(changed.routeResumeThreshold, 0.75)
+})
+
+test('background language accepts only the two settings choices at every config entry', () => {
+  const defaults = defaultRuntimeSettings(resolveConfig())
+  assert.equal(defaults.defaultLanguage, 'zh-CN')
+  for (const defaultLanguage of ['zh-CN', 'en']) {
+    assert.equal(resolveConfig({ defaultLanguage }).defaultLanguage, defaultLanguage)
+    assert.equal(resolveRuntimeSettings({ defaultLanguage }, defaults).defaultLanguage, defaultLanguage)
+  }
+  for (const defaultLanguage of ['', 'fr', 'en-US', 'English', null, 1]) {
+    assert.throws(() => resolveConfig({ defaultLanguage }), /defaultLanguage must be zh-CN or en/)
+    assert.throws(() => resolveRuntimeSettings({ defaultLanguage }, defaults), /defaultLanguage must be zh-CN or en/)
+  }
 })
 
 test('runtime settings persist across service restarts and update extraction atomically', async () => {
@@ -49,6 +62,7 @@ test('runtime settings persist across service restarts and update extraction ato
       historyRetentionDays: 45,
       historyBatchSize: 16,
       memoryExtractionEnabled: false,
+      defaultLanguage: 'en',
     })
     assert.equal(changed.previous.historySyncEnabled, true)
     assert.equal(changed.settings.historySyncEnabled, false)
@@ -68,6 +82,7 @@ test('runtime settings persist across service restarts and update extraction ato
     assert.equal(second.runtimeSettingsView().settings.historyRetentionDays, 45)
     assert.equal(second.runtimeSettingsView().settings.backupRetention, 21)
     assert.equal(second.runtimeSettingsView().settings.memoryExtractionEnabled, false)
+    assert.equal(second.runtimeSettingsView().settings.defaultLanguage, 'en')
   } finally {
     await second?.dispose()
     if (!first.disposed) await first.dispose()

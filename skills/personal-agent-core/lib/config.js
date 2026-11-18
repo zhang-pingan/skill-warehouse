@@ -1,6 +1,6 @@
 import { WECHAT_DEFAULTS } from './wechat-config.js'
 import { defaultRuntimeSettings, resolveRuntimeSettings } from './runtime-settings.js'
-import { DEFAULT_WORKER_RULES, validateWorkerRules } from './worker-policy.js'
+import { migrateWorkerSettings } from './worker-policy.js'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -24,6 +24,8 @@ const workerPresets = input => {
 }
 
 export function resolveConfig(input = {}, env = process.env) {
+  const migrated = migrateWorkerSettings(input)
+  input = migrated.settings
   const dataDir = path.resolve(input.dataDir ?? env.DSH_PERSONAL_AGENT_DATA_DIR
     ?? path.join(os.homedir(), '.dsh', 'personal-agent-core'))
   const codexHome = path.resolve(input.codexHome ?? env.CODEX_HOME ?? path.join(os.homedir(), '.codex'))
@@ -36,18 +38,21 @@ export function resolveConfig(input = {}, env = process.env) {
     return path.resolve(root)
   }))]
   const dshWorkerPresets = workerPresets(input.dshWorkerPresets)
-  const defaultDshPreset = input.defaultDshPreset ?? 'standard'
-  if (!dshWorkerPresets.includes(defaultDshPreset)) throw new TypeError('defaultDshPreset must be included in dshWorkerPresets')
   const routeResumeThreshold = input.routeResumeThreshold ?? 0.86
   if (!Number.isFinite(routeResumeThreshold) || routeResumeThreshold < 0 || routeResumeThreshold > 1) throw new TypeError('routeResumeThreshold must be from 0 to 1')
   const resolved = {
     ...WECHAT_DEFAULTS,
     wechatLockDir: path.resolve(input.wechatLockDir ?? path.join(os.homedir(), '.dsh', 'locks', 'personal-agent-wechat')),
+    mainSessionTitle: input.mainSessionTitle ?? '鲸鱼娘',
     defaultLanguage: input.defaultLanguage ?? 'zh-CN',
     hotHistoryDays: positiveInteger(input, 'hotHistoryDays', 90),
     candidateReviewDays: positiveInteger(input, 'candidateReviewDays', 90),
     archiveCapacityBytes: positiveInteger(input, 'archiveCapacityBytes', 10737418240),
-    workerRules: validateWorkerRules(input.workerRules ?? DEFAULT_WORKER_RULES),
+    defaultWorkerPriority: input.defaultWorkerPriority ?? 'dsh_standard',
+    workerModelPolicies: input.workerModelPolicies ?? {},
+    workerCapabilities: input.workerCapabilities ?? { dsh_subagent: [], codex: [] },
+    workerSettingsMigration: migrated.migration ?? input.workerSettingsMigration ?? null,
+    routeCandidateLimit: positiveInteger(input, 'routeCandidateLimit', 50),
     modelPolicies: input.modelPolicies ?? {},
     semanticRoutingEnabled: bool(input.semanticRoutingEnabled, true),
     routeAmbiguityGap: input.routeAmbiguityGap ?? 0.08,
@@ -88,16 +93,11 @@ export function resolveConfig(input = {}, env = process.env) {
     dshWorkerEnabled: bool(input.dshWorkerEnabled ?? env.DSH_PERSONAL_AGENT_DSH_WORKER, true),
     codexWorkerEnabled: bool(input.codexWorkerEnabled ?? env.DSH_PERSONAL_AGENT_CODEX_WORKER, false),
     dshWorkerPresets: Object.freeze(dshWorkerPresets),
-    defaultDshPreset,
     workerBudgetMs: positiveInteger(input, 'workerBudgetMs', 30 * 60_000),
     routeResumeThreshold,
     historyRead: bool(input.historyRead ?? env.DSH_PERSONAL_AGENT_HISTORY_READ, true),
     taskNative: bool(input.taskNative ?? env.DSH_PERSONAL_AGENT_TASK_NATIVE, true),
-    codexConnect: bool(input.codexConnect ?? env.DSH_PERSONAL_AGENT_CODEX_CONNECT, false),
-    codexMutations: bool(input.codexMutations ?? env.DSH_PERSONAL_AGENT_CODEX_MUTATIONS, false),
-    routingResume: bool(input.routingResume ?? env.DSH_PERSONAL_AGENT_ROUTING_RESUME, false),
-    routingFork: bool(input.routingFork ?? env.DSH_PERSONAL_AGENT_ROUTING_FORK, false),
-    experimentalCodexApi: bool(input.experimentalCodexApi ?? env.DSH_PERSONAL_AGENT_CODEX_EXPERIMENTAL, false),
+    experimentalCodexApi: bool(input.experimentalCodexApi ?? env.DSH_PERSONAL_AGENT_CODEX_EXPERIMENTAL, true),
     operatorToken,
     allowedWorkspaceRoots: Object.freeze(allowedWorkspaceRoots),
   }

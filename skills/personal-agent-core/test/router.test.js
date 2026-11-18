@@ -36,10 +36,10 @@ test('active turn follow-up waits until queue lease handoff exists', () => {
   assert.equal(result.deliveryAction, 'wait')
 })
 
-test('objective divergence forks only at completed boundary', () => {
-  const fork = route({ request: { mutates: true }, candidates: [{ ...candidate, objectiveChange: true }], flags })
+test('explicit fork requires a completed boundary', () => {
+  const fork = route({ request: { mutates: true, forceFork:true }, candidates: [{ ...candidate, objectiveChange: true }], flags })
   assert.equal(fork.deliveryAction, 'fork_thread')
-  const wait = route({ request: { mutates: true }, candidates: [{ ...candidate, objectiveChange: true, lastCompletedTurnId: null }], flags })
+  const wait = route({ request: { mutates: true, forceFork:true }, candidates: [{ ...candidate, objectiveChange: true, lastCompletedTurnId: null }], flags })
   assert.equal(wait.deliveryAction, 'wait')
 })
 

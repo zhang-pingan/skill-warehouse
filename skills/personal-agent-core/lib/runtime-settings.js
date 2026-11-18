@@ -1,9 +1,10 @@
 import { WECHAT_DEFAULTS, validateWechatSetting } from './wechat-config.js'
-import { validateWorkerRules } from './worker-policy.js'
+import { WORKER_PRIORITIES } from './worker-policy.js'
 /** Runtime-editable preferences for background work and history import. */
 
 export const RUNTIME_SETTING_KEYS = Object.freeze([
   ...Object.keys(WECHAT_DEFAULTS),
+  'mainSessionTitle',
   'defaultLanguage',
   'hotHistoryDays',
   'candidateReviewDays',
@@ -13,7 +14,10 @@ export const RUNTIME_SETTING_KEYS = Object.freeze([
   'workerHeartbeatEnabled',
   'routeAmbiguityGap',
   'backgroundModelPolicy',
-  'workerRules',
+  'defaultWorkerPriority',
+  'workerModelPolicies',
+  'workerCapabilities',
+  'routeCandidateLimit',
   'modelPolicies',
   'semanticRoutingEnabled',
   'memoryExtractionEnabled',
@@ -32,7 +36,6 @@ export const RUNTIME_SETTING_KEYS = Object.freeze([
   'dshWorkerEnabled',
   'codexWorkerEnabled',
   'dshWorkerPresets',
-  'defaultDshPreset',
   'workerBudgetMs',
   'routeResumeThreshold',
   'importIntervalMs',
@@ -53,6 +56,7 @@ export const RUNTIME_SETTING_KEYS = Object.freeze([
 ])
 
 const ranges = Object.freeze({
+  routeCandidateLimit: [1, 200],
   hotHistoryDays: [1, 36500], candidateReviewDays: [1, 36500], archiveCapacityBytes: [1048576, 1099511627776],
   leaseTtlMs: [1000, 3600000], workerHeartbeatMs: [100, 1800000],
   memoryExtractionIntervalMs: [1000, 604800000], memoryExtractionBatchSize: [1, 200], memoryExtractionRetryLimit: [1, 20], memoryExtractionBudgetMs: [1, 3600000],
@@ -81,6 +85,7 @@ const presetPattern = /^[a-z][a-z0-9-]{0,31}$/
 export function defaultRuntimeSettings(config) {
   return Object.freeze({
     ...Object.fromEntries(Object.entries(WECHAT_DEFAULTS).map(([key, fallback]) => [key, config[key] ?? fallback])),
+    mainSessionTitle: config.mainSessionTitle,
     defaultLanguage: config.defaultLanguage,
     hotHistoryDays: config.hotHistoryDays,
     candidateReviewDays: config.candidateReviewDays,
@@ -90,7 +95,10 @@ export function defaultRuntimeSettings(config) {
     workerHeartbeatEnabled: config.workerHeartbeatEnabled,
     routeAmbiguityGap: config.routeAmbiguityGap,
     backgroundModelPolicy: config.backgroundModelPolicy,
-    workerRules: config.workerRules,
+    defaultWorkerPriority: config.defaultWorkerPriority,
+    workerModelPolicies: config.workerModelPolicies,
+    workerCapabilities: config.workerCapabilities,
+    routeCandidateLimit: config.routeCandidateLimit,
     modelPolicies: config.modelPolicies,
     semanticRoutingEnabled: config.semanticRoutingEnabled,
     memoryExtractionEnabled: config.memoryExtractionEnabled,
@@ -110,7 +118,6 @@ export function defaultRuntimeSettings(config) {
     dshWorkerEnabled: config.dshWorkerEnabled,
     codexWorkerEnabled: config.codexWorkerEnabled,
     dshWorkerPresets: [...config.dshWorkerPresets],
-    defaultDshPreset: config.defaultDshPreset,
     workerBudgetMs: config.workerBudgetMs,
     routeResumeThreshold: config.routeResumeThreshold,
     importIntervalMs: config.importIntervalMs,
@@ -145,15 +152,32 @@ export function resolveRuntimeSettings(input, base) {
   for (const key of RUNTIME_SETTING_KEYS) {
     if (Object.hasOwn(input, key)) value[key] = input[key]
     if (validateWechatSetting(key, value[key])) continue
+    if (key === 'mainSessionTitle') {
+      if (typeof value[key] !== 'string' || /[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u.test(value[key])) throw new TypeError('主会话名称不能包含控制字符。')
+      value[key] = value[key].replace(/\s+/gu, ' ').trim()
+      if (!value[key] || Buffer.byteLength(value[key], 'utf8') > 48) throw new TypeError('主会话名称不能为空，最多支持 48 字节（约 16 个汉字）。')
+      continue
+    }
     if (key === 'defaultLanguage') {
-      if (typeof value[key] !== 'string' || !value[key].trim() || value[key].length > 100) throw new TypeError('defaultLanguage must be a language name or locale')
+      if (!['zh-CN', 'en'].includes(value[key])) throw new TypeError('defaultLanguage must be zh-CN or en')
       continue
     }
     if (key === 'backgroundModelPolicy') {
       if (value[key] !== null && typeof value[key] !== 'string') throw new TypeError('backgroundModelPolicy must be a model policy name or null')
       continue
     }
-    if (key === 'workerRules') { value[key] = validateWorkerRules(value[key]); continue }
+    if (key === 'defaultWorkerPriority') {
+      if (!Object.hasOwn(WORKER_PRIORITIES, value[key])) throw new TypeError('Invalid defaultWorkerPriority')
+      continue
+    }
+    if (key === 'workerModelPolicies' || key === 'workerCapabilities') {
+      if (!value[key] || typeof value[key] !== 'object' || Array.isArray(value[key])) throw new TypeError(`Invalid ${key}`)
+      const allowed = key === 'workerModelPolicies' ? Object.keys(WORKER_PRIORITIES) : ['codex','dsh_subagent']
+      for (const [name, item] of Object.entries(value[key])) {
+        if (!allowed.includes(name) || (key === 'workerModelPolicies' ? typeof item !== 'string' : !Array.isArray(item) || item.some(cap => typeof cap !== 'string' || !cap.trim()))) throw new TypeError(`Invalid ${key}`)
+      }
+      continue
+    }
     if (key === 'modelPolicies') {
       if (!value[key] || typeof value[key] !== 'object' || Array.isArray(value[key])) throw new TypeError('modelPolicies must be an object')
       for (const policy of Object.values(value[key])) {
@@ -169,10 +193,6 @@ export function resolveRuntimeSettings(input, base) {
       value[key] = [...new Set(value[key])]
       continue
     }
-    if (key === 'defaultDshPreset') {
-      if (typeof value[key] !== 'string' || !presetPattern.test(value[key])) throw new TypeError('defaultDshPreset must be a preset id')
-      continue
-    }
     if (key === 'routeResumeThreshold' || key === 'routeAmbiguityGap') {
       if (!Number.isFinite(value[key]) || value[key] < 0 || value[key] > 1) throw new TypeError(`${key} must be from 0 to 1`)
       continue
@@ -186,11 +206,13 @@ export function resolveRuntimeSettings(input, base) {
       throw new TypeError(`${key} must be an integer from ${range[0]} to ${range[1]}`)
     }
   }
-  if (!value.dshWorkerPresets.includes(value.defaultDshPreset)) throw new TypeError('defaultDshPreset must be included in dshWorkerPresets')
+  const selected = WORKER_PRIORITIES[value.defaultWorkerPriority]
+  if (selected.worker === 'codex' && !value.codexWorkerEnabled) throw new TypeError('Codex must be enabled before selecting its default priority')
+  if (selected.agentPreset && !value.dshWorkerPresets.includes(selected.agentPreset)) throw new TypeError('Default worker preset must be included in dshWorkerPresets')
   if (value.workerHeartbeatMs * 2 >= value.leaseTtlMs) throw new TypeError('workerHeartbeatMs must be less than half of leaseTtlMs')
   if (value.backgroundModelPolicy && value.modelPolicies[value.backgroundModelPolicy]?.worker !== 'dsh_subagent') throw new TypeError('Background analysis requires a configured DSH model policy')
-  for (const rule of value.workerRules) {
-    if (rule.modelPolicy && (!value.modelPolicies[rule.modelPolicy] || value.modelPolicies[rule.modelPolicy].worker !== rule.worker)) throw new TypeError('Worker rule refers to a missing or incompatible model policy')
+  for (const [priority, name] of Object.entries(value.workerModelPolicies)) {
+    if (name && value.modelPolicies[name]?.worker !== WORKER_PRIORITIES[priority].worker) throw new TypeError('Worker model policy is missing or incompatible')
   }
   return Object.freeze(value)
 }

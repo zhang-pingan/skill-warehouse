@@ -15,6 +15,7 @@ function fixture(overrides = {}) {
   let saved = { ...defaults }, writes = [], codexWrites = [], timers = new Map(), sequence = 0
   const response = () => ({ settings: structuredClone(saved), defaults, presets: overrides.presets ?? ['standard', 'cordis', 'ptc', 'minimal'].map(id => ({ id })), jobs: [], progress: {} })
   const make = runInNewContext(`${helpers}\n${controller}\ncreateSettingsController`, {
+    TextEncoder,
     setTimeout: fn => { const id = ++sequence; timers.set(id, fn); return id },
     clearTimeout: id => timers.delete(id),
     requestSettings: async (method, patch) => {
@@ -97,13 +98,13 @@ test('coupled heartbeat settings apply atomically after the pair becomes valid',
   await f.store.dispose()
 })
 
-test('preset and rule references are submitted together', async () => {
-  const f = fixture(); await f.store.load()
-  f.store.edit(draft => ({ ...draft, dshWorkerPresets: ['minimal'], defaultDshPreset: 'minimal', workerRules: draft.workerRules.map(rule => ({ ...rule, agentPreset: rule.worker === 'dsh_subagent' ? 'minimal' : undefined })) }), true)
+test('default priority and allowed presets apply atomically', async () => {
+  const f=fixture();await f.store.load()
+  f.store.edit({dshWorkerPresets:['cordis'],defaultWorkerPriority:'dsh_cordis'},true)
   await settle(f.store)
-  assert.equal(f.writes.length, 1)
-  assert.deepEqual(f.saved().dshWorkerPresets, ['minimal'])
-  assert.equal(f.saved().defaultDshPreset, 'minimal')
+  assert.equal(f.writes.length,1)
+  assert.deepEqual(f.saved().dshWorkerPresets,['cordis'])
+  assert.equal(f.saved().defaultWorkerPriority,'dsh_cordis')
   await f.store.dispose()
 })
 
@@ -164,17 +165,25 @@ test('an unavailable worker preset does not prevent changing an unrelated settin
   await f.store.dispose()
 })
 
-test('comma-separated drafts preserve unfinished typing while persisted keywords are normalized', async () => {
+test('Codex priority is rejected while Codex is disabled', async () => {
+  const f=fixture();await f.store.load()
+  f.store.edit({defaultWorkerPriority:'codex'},true)
+  await settle(f.store)
+  assert.equal(f.writes.length,0)
+  assert.equal(f.store.getSnapshot().saveState,'invalid')
+  await f.store.dispose()
+})
+
+test('conversation names autosave while empty and over-budget names stay in the draft', async () => {
   const f = fixture(); await f.store.load()
-  const key = f.store.getSnapshot().draft.workerRules[0]._key
-  const input = text => f.store.edit(draft => ({ ...draft, workerRules: draft.workerRules.map(rule => rule._key === key ? { ...rule, _keywordsText: text } : rule) }))
-  input('alpha, ')
-  await settle(f.store)
-  assert.equal(f.store.getSnapshot().draft.workerRules[0]._keywordsText, 'alpha, ')
-  assert.deepEqual(f.saved().workerRules[0].keywords, ['alpha'])
-  input('alpha, beta')
-  await settle(f.store)
-  assert.deepEqual(f.saved().workerRules[0].keywords, ['alpha', 'beta'])
-  assert.equal('_keywordsText' in f.writes.at(-1).workerRules[0], false)
+  f.store.edit({ mainSessionTitle: '小鲸鱼' }); await settle(f.store)
+  assert.equal(f.saved().mainSessionTitle, '小鲸鱼')
+  for (const value of ['', '鲸'.repeat(17)]) {
+    f.store.edit({ mainSessionTitle: value }); await settle(f.store)
+    assert.ok(f.store.getSnapshot().formErrors.mainSessionTitle)
+    assert.equal(f.saved().mainSessionTitle, '小鲸鱼')
+  }
+  f.store.edit({ mainSessionTitle: '鲸鱼娘' }); await settle(f.store)
+  assert.equal(f.saved().mainSessionTitle, '鲸鱼娘')
   await f.store.dispose()
 })

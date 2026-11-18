@@ -7,6 +7,7 @@ import { createServer } from 'node:http'
 import { PersonalAgentService } from '../lib/service.js'
 import { resolveConfig } from '../lib/config.js'
 import { MainSession } from '../lib/main-session.js'
+import { ExecutionResults } from '../lib/execution-results.js'
 import { WechatChannel } from '../lib/wechat-channel.js'
 import { wechatProjection } from '../lib/wechat-projection.js'
 import { WechatApi, WechatError, parseWechatUpdates, trustedWechatOrigin, splitWechatText } from '../lib/wechat-api.js'
@@ -24,11 +25,21 @@ async function fixture(t, settings = {}) {
   }
   const ctx = {
     credentials: { async readRecord() { return record }, async modifyRecord(_key, mutate) { if (credentialFailure) throw new Error('credential disk'); record = await mutate(record); return record }, async deleteRecord() { record = null } },
-    agents: { get: id => agents.get(id) }, workspaceRegistry: { archivedSessionIds: [] },
+    agents: { get: id => agents.get(id), turnBoundaryOf: session => ({ lastTurn: logs.get(session.id).some(e => e.type === 'turn/start') ? 1 : 0, openTurnStartSeq: null }) }, workspaceRegistry: { archivedSessionIds: [],
+      async archiveSession(id) {
+        if (agents.get(id)?.status === 'running') throw new Error('native activity is running')
+        if (!this.archivedSessionIds.includes(id)) this.archivedSessionIds.push(id)
+      },
+      async unarchiveSession(id) { this.archivedSessionIds = this.archivedSessionIds.filter(value => value !== id) },
+    },
     workspaceController: { async initializeDefault() { return { workspace: { workspaceId: 'workspace' } } } },
-    agentPresets: { presetForSession: () => 'standard' },
+    agentPresets: { presetForSession: session => session.preset ?? 'standard', async select(agent, preset) { agent.session.preset = preset; append(agent.id ?? agent.session.id, 'agent-preset/selected', { agentPreset: preset }) } },
+    sessionTitle: {
+      get(session) { return logs.get(session.id).findLast(event => event.type === 'session/title')?.data },
+      rename(session, title) { const data = { title, source: { kind: 'user' }, messageSeqs: [] }; append(session.id, 'session/title', data); return data },
+    },
     sessionPersistence: {
-      async stat(id) { return agents.has(id) ? { id } : null },
+      async stat(id) { return agents.has(id) ? { id, eventCount: logs.get(id).length, revision: logs.get(id).length, header: { id, createdAt: '2026-11-17T00:00:00.000Z' } } : null },
       async flush() { if (flushFailure) { flushFailure = false; throw new Error('flush disk') } },
       async open(id) { return { async read(offset, length) { return {events: logs.get(id).slice(offset, offset + length)} }, async close() {} } },
     },
@@ -81,7 +92,7 @@ const signal = () => new AbortController().signal
   const results=await Promise.all(Array.from({length:10},()=>f.service.mainSession.ensure()))
   assert.equal(f.creates,1)
   assert.equal(new Set(results.map(r=>r.sessionId)).size,1)
-  assert.equal(f.logs.get(results[0].sessionId).length,1)
+  assert.equal(f.logs.get(results[0].sessionId).length,2)
   f.ctx.workspaceRegistry.archivedSessionIds.push(results[0].sessionId)
   await assert.rejects(f.service.mainSession.ensure(),{code:'MAIN_SESSION_ARCHIVED'})
   assert.equal(f.creates,1)
@@ -561,7 +572,7 @@ test('a failed main-session flush retries the same reserved identity without dup
   assert.equal(target.sessionId,original.session_id)
   assert.equal(f.service.mainSession.binding().state,'ready')
   assert.equal(f.creates,1)
-  assert.equal(f.logs.get(target.sessionId).length,1)
+  assert.equal(f.logs.get(target.sessionId).filter(event => event.type === 'agent/inbox/spliced').length,1)
   assert.equal(flushes,3)
 })
 
@@ -890,4 +901,200 @@ test('automatic verification keeps account ownership until its durable writes fi
   assert.equal(f.channel.store.channel().session_id,f.service.mainSession.binding().session_id)
   assert.equal(f.channel.store.channel().owner_id,'replacement')
   assert.equal(f.record.payload.accountId,'account')
+})
+
+test('clearing the main conversation syncs only messages, preserves memory and login, and switches both identities atomically', async t => {
+  const f = await fixture(t), old = await f.bind()
+  f.channel.store.update({ cursor: 'preserved-receive-cursor' })
+  f.db.prepare("INSERT INTO memory_records(memory_id,memory_kind,content,memory_state,confidence,recorded_at,created_by) VALUES('kept','fact','Keep this memory','confirmed',1,'2026-11-17','user')").run()
+  const memory = f.db.prepare('SELECT * FROM memory_records').all()
+  const preferences = f.service.runtimeSettingsView().settings
+  f.append(old.sessionId, 'turn/start', { turn: 1 })
+  f.append(old.sessionId, 'user/message', { source: { kind: 'user' }, content: [{ type: 'text', text: 'Keep my message' }] }, 'append')
+  f.append(old.sessionId, 'assistant/message', { turn: 1, message: { content: [{ type: 'text', text: 'Keep my answer' }] } }, 'append')
+  f.append(old.sessionId, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  for (let i = 0; i < 20; i++) old.agent.inject({ ...old.agent.inbox.nextStep[0], id: `old-duplicate-${i}` })
+  await f.channel.acceptBatch(batch(['pending-reset'], 'preserved-receive-cursor'))
+  f.channel.store.enqueue('old-reply', 'Old reply')
+  f.channel.store.enqueue('uncertain', 'Uncertain reply')
+  f.db.prepare("UPDATE wechat_outbox SET state='sending' WHERE text='Uncertain reply'").run()
+  const credentials = structuredClone(f.record), reset = f.service.mainSession.reset
+  assert.throws(() => reset.start({ expectedSessionId: old.sessionId }), /确认/)
+  reset.start({ confirmed: true, expectedSessionId: old.sessionId })
+  const operation = reset.operation
+  assert.equal(reset.start({ confirmed: true, expectedSessionId: old.sessionId }).running, true)
+  assert.equal(reset.operation, operation)
+  await assert.rejects(f.service.mainSession.ensure(), { code: 'MAIN_SESSION_RESETTING' })
+  assert.throws(() => f.service.initializeMemory({ confirmed: true }), { code: 'MAIN_SESSION_RESETTING' })
+  await operation
+  assert.equal(reset.view().state, 'succeeded', JSON.stringify(reset.view()))
+  const current = await f.service.mainSession.ensure(), channel = f.channel.store.channel()
+  assert.notEqual(current.sessionId, old.sessionId)
+  assert.equal(current.version, old.version + 1)
+  assert.equal(channel.session_id, current.sessionId)
+  assert.equal(channel.binding_version, current.version)
+  assert.equal(channel.cursor, 'preserved-receive-cursor')
+  assert.equal(channel.owner_id, 'owner')
+  assert.deepEqual(f.record, credentials)
+  assert.deepEqual(f.db.prepare('SELECT * FROM memory_records').all(), memory)
+  assert.deepEqual(f.service.runtimeSettingsView().settings, preferences)
+  assert.deepEqual(f.db.prepare('SELECT staged_text FROM history_messages ORDER BY source_order').all().map(r => r.staged_text), ['Keep my message', 'Keep my answer'])
+  assert.deepEqual(f.ctx.workspaceRegistry.archivedSessionIds, [old.sessionId])
+  assert.equal(f.db.prepare('SELECT state FROM wechat_inbox').get().state, 'held')
+  assert.equal(f.db.prepare("SELECT state FROM wechat_outbox WHERE text='Old reply'").get().state, 'cancelled')
+  assert.equal(f.db.prepare("SELECT state FROM wechat_outbox WHERE text='Uncertain reply'").get().state, 'unknown')
+  assert.equal(channel.observed_seq, current.agent.session.seq - 1)
+  assert.equal(current.agent.inbox.nextStep.length, 1)
+  assert.equal(f.logs.get(current.sessionId).filter(e => e.type === 'user/message').length, 0)
+  assert.equal(reset.start({ confirmed: true, expectedSessionId: old.sessionId }).state, 'succeeded')
+  assert.equal(f.creates, 2)
+  assert.equal(f.sent.length, 0)
+})
+
+test('active conversations, pending login and stale page targets cannot start a reset', async t => {
+  const f = await fixture(t), old = await f.bind(), reset = f.service.mainSession.reset
+  old.agent.status = 'running'
+  assert.throws(() => reset.start({ confirmed: true, expectedSessionId: old.sessionId }), { code: 'MAIN_SESSION_BUSY' })
+  old.agent.status = 'idle'; f.channel.loginLifetime = new AbortController()
+  assert.throws(() => reset.start({ confirmed: true, expectedSessionId: old.sessionId }), { code: 'WECHAT_LOGIN_BUSY' })
+  f.channel.loginLifetime = null
+  assert.throws(() => reset.start({ confirmed: true, expectedSessionId: 'stale' }), { code: 'MAIN_SESSION_CHANGED' })
+  assert.equal(f.creates, 1)
+  assert.deepEqual(f.ctx.workspaceRegistry.archivedSessionIds, [])
+})
+
+test('failed history sync restores the old target and a retry reuses its reserved successor', async t => {
+  const f = await fixture(t), old = await f.bind(), reset = f.service.mainSession.reset
+  const read = f.ctx.sessionPersistence.open
+  f.ctx.sessionPersistence.open = async () => { throw new Error('fixture read failed') }
+  const before = f.channel.store.channel()
+  reset.start({ confirmed: true, expectedSessionId: old.sessionId }); await reset.operation
+  assert.equal(reset.view().state, 'failed')
+  assert.equal(f.ctx.sessionTitle.get(old.agent.session).title, '鲸鱼娘')
+  assert.equal(reset.view().archiveNumber, 1)
+  assert.match(reset.view().lastError, /fixture read failed/)
+  assert.equal(f.service.mainSession.binding().session_id, old.sessionId)
+  assert.deepEqual(f.channel.store.channel(), before)
+  assert.deepEqual(f.ctx.workspaceRegistry.archivedSessionIds, [])
+  assert.equal((await f.service.mainSession.ensure()).sessionId, old.sessionId)
+  const successor = reset.view().newSessionId
+  f.ctx.sessionPersistence.open = read
+  reset.start({ confirmed: true, expectedSessionId: old.sessionId }); await reset.operation
+  assert.equal(reset.view().state, 'succeeded')
+  assert.equal(f.service.mainSession.binding().session_id, successor)
+  assert.equal(f.ctx.sessionTitle.get(old.agent.session).title, '鲸鱼娘-废弃会话-1')
+})
+
+test('successor durability failure leaves the old binding intact and retries without another successor', async t => {
+  const f = await fixture(t), old = await f.bind(), reset = f.service.mainSession.reset
+  const create = f.ctx.sessionController.create
+  f.ctx.sessionController.create = async request => { const result = await create(request); f.flushFailure = true; return result }
+  reset.start({ confirmed: true, expectedSessionId: old.sessionId }); await reset.operation
+  assert.equal(reset.view().state, 'failed')
+  assert.equal(f.service.mainSession.binding().session_id, old.sessionId)
+  assert.deepEqual(f.ctx.workspaceRegistry.archivedSessionIds, [])
+  const successor = reset.view().newSessionId
+  reset.start({ confirmed: true, expectedSessionId: old.sessionId }); await reset.operation
+  assert.equal(reset.view().state, 'succeeded')
+  assert.equal(f.service.mainSession.binding().session_id, successor)
+  assert.equal(f.creates, 2)
+})
+
+test('reset joins history synchronization and shutdown keeps the ledger open until rollback settles', async t => {
+  const f = await fixture(t), old = await f.bind(), reset = f.service.mainSession.reset
+  const entered = Promise.withResolvers(), release = Promise.withResolvers()
+  const read = f.ctx.sessionPersistence.open
+  f.ctx.sessionPersistence.open = async id => { entered.resolve(); await release.promise; return read(id) }
+  reset.start({ confirmed: true, expectedSessionId: old.sessionId })
+  await entered.promise
+  let closed = false
+  const closing = f.service.dispose().then(() => { closed = true })
+  await Promise.resolve()
+  assert.equal(closed, false)
+  assert.equal(f.service.mainSession.binding().session_id, old.sessionId)
+  release.resolve()
+  await closing
+  assert.deepEqual(f.ctx.workspaceRegistry.archivedSessionIds, [])
+  assert.equal(f.creates, 1)
+})
+
+test('interrupted replacement retains its reserved successor and can complete after restoring the reset owner', async t => {
+  const f = await fixture(t), old = await f.bind()
+  f.service.backgroundJobs.save({ name: 'main-session-reset', state: 'running', running: false, phase: 'creating',
+    oldSessionId: old.sessionId, oldVersion: old.version, newSessionId: 'reserved-successor', newVersion: old.version + 1,
+    archiveOwned: true, committed: false, lastError: 'Host stopped' })
+  await f.ctx.workspaceRegistry.archiveSession(old.sessionId)
+  await f.ctx.sessionController.create({ sessionId: 'reserved-successor' })
+  const reset = f.service.mainSession.reset
+  reset.start({ confirmed: true, expectedSessionId: old.sessionId }); await reset.operation
+  assert.equal(reset.view().state, 'succeeded')
+  assert.equal((await f.service.mainSession.ensure()).sessionId, 'reserved-successor')
+  assert.equal(f.creates, 2)
+})
+
+
+test('main titles are pinned once, archives count across owner restoration and naming changes', async t => {
+  const f = await fixture(t), main = f.service.mainSession
+  const first = await main.ensure()
+  assert.equal(f.ctx.sessionTitle.get(first.agent.session).title, '鲸鱼娘')
+  await main.ensure(); await main.ensure()
+  assert.equal(f.logs.get(first.sessionId).filter(event => event.type === 'session/title').length, 1)
+  main.reset.start({ confirmed: true, expectedSessionId: first.sessionId })
+  assert.throws(() => f.service.updateRuntimeSettings({ mainSessionTitle: '另一个名字' }), { code: 'MAIN_SESSION_RESETTING' })
+  await main.reset.operation
+  assert.equal(f.ctx.sessionTitle.get(first.agent.session).title, '鲸鱼娘-废弃会话-1')
+  const second = await main.ensure()
+  f.service.mainSession = new MainSession(f.service, main.projection)
+  const restored = f.service.mainSession
+  restored.reset.start({ confirmed: true, expectedSessionId: second.sessionId }); await restored.reset.operation
+  assert.equal(f.ctx.sessionTitle.get(second.agent.session).title, '鲸鱼娘-废弃会话-2')
+  f.service.updateRuntimeSettings({ mainSessionTitle: '  小鲸鱼  ' })
+  const third = await restored.ensure()
+  assert.equal(f.ctx.sessionTitle.get(third.agent.session).title, '小鲸鱼')
+  restored.reset.start({ confirmed: true, expectedSessionId: third.sessionId }); await restored.reset.operation
+  assert.equal(f.ctx.sessionTitle.get(third.agent.session).title, '小鲸鱼-废弃会话-3')
+  assert.equal(f.ctx.sessionTitle.get((await restored.ensure()).agent.session).title, '小鲸鱼')
+  for (const title of ['', '鲸'.repeat(17), 'bad\u001bname']) assert.throws(() => f.service.updateRuntimeSettings({ mainSessionTitle: title }), TypeError)
+})
+
+
+test('an untouched main conversation restores its standard preset after native blank-view selection', async t => {
+  const f = await fixture(t), main = f.service.mainSession, target = await main.ensure()
+  target.agent.session.preset = 'cordis'
+  assert.equal((await main.ensure()).sessionId, target.sessionId)
+  assert.equal(target.agent.session.preset, 'standard')
+  assert.equal(target.agent.inbox.nextStep.length, 1)
+  const events = f.logs.get(target.sessionId).length
+  await main.ensure(); assert.equal(f.logs.get(target.sessionId).length, events)
+  f.append(target.sessionId, 'turn/start', { turn: 1 })
+  target.agent.session.preset = 'cordis'
+  await assert.rejects(main.ensure(), { code: 'MAIN_SESSION_PRESET' })
+})
+
+
+test('main reset waits for an admitted worker result to persist before archiving',async t=>{
+  const f=await fixture(t),old=await f.bind()
+  old.agent.inbox.nextTurn=[]
+  const entered=Promise.withResolvers(),release=Promise.withResolvers(),events=[]
+  const prompt=f.ctx.sessionController.prompt
+  f.ctx.sessionController.prompt=async request=>{
+    entered.resolve();await release.promise
+    const result=await prompt(request);events.push('prompt');return result
+  }
+  f.service.results=new ExecutionResults(f.service,{stateOf:()=>({})})
+  const task=f.service.ledger.createTask({objective:'Deliver result before reset',acceptance:['Verify']})
+  const run=f.service.ledger.planExecution({taskId:task.taskId,executorKind:'dsh_subagent',method:'session/prompt',params:{},dispatch:false,mutatesWorkspace:false})
+  f.service.results.record(run.executionId,{executionId:run.executionId,acceptanceRequired:true})
+  const archive=f.ctx.workspaceRegistry.archiveSession
+  f.ctx.workspaceRegistry.archiveSession=async id=>{
+    assert.equal(f.db.prepare('SELECT delivery_state FROM execution_results WHERE execution_id=?').get(run.executionId).delivery_state,'delivered')
+    events.push('archive');return archive.call(f.ctx.workspaceRegistry,id)
+  }
+  const pending=f.service.results.kick()
+  await entered.promise
+  f.service.mainSession.reset.start({confirmed:true,expectedSessionId:old.sessionId})
+  release.resolve()
+  await pending;await f.service.mainSession.reset.operation
+  assert.equal(f.service.mainSession.reset.view().state,'succeeded',JSON.stringify(f.service.mainSession.reset.view()))
+  assert.deepEqual(events,['prompt','archive'])
 })

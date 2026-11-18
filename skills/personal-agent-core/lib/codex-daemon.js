@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { lstat } from 'node:fs/promises'
 import path from 'node:path'
+import { setTimeout } from 'node:timers/promises'
 import { promisify } from 'node:util'
 
 const exec = promisify(execFile)
@@ -40,14 +41,15 @@ export class CodexDaemonManager {
     }
   }
 
-  async ensureStarted() {
+  async ensureStarted({ signal } = {}) {
+    signal?.throwIfAborted()
     this.assertDefaultSocket()
     if (await this.socketExists()) return { started: false, mode: 'existing', socketPath: this.config.codexSocketPath }
     if (!this.config.manageCodexDaemon) throw new Error(`Codex App Server socket not found: ${this.config.codexSocketPath}`)
-    await this.execute(this.config.codexBinary, ['app-server', 'daemon', 'start'], { encoding: 'utf8', timeout: 20_000, env: { ...process.env, CODEX_HOME: this.config.codexHome } })
+    await this.execute(this.config.codexBinary, ['app-server', 'daemon', 'start'], { encoding: 'utf8', timeout: 20_000, signal, env: { ...process.env, CODEX_HOME: this.config.codexHome } })
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (await this.socketExists()) return { started: true, mode: 'daemon-cli', socketPath: this.config.codexSocketPath }
-      await new Promise(resolve => setTimeout(resolve, 50))
+      await setTimeout(50, undefined, { signal })
     }
     throw new Error(`Codex daemon start returned without creating its control socket: ${this.config.codexSocketPath}`)
   }
