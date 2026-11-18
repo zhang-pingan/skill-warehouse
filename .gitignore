@@ -1,1 +1,4 @@
 .idea
+
+# 本地评测结果、日志和归档
+/skills/personal-agent-core/test/evaluation/results/
