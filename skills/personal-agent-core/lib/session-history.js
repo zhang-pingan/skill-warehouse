@@ -197,12 +197,47 @@ export class SessionHistory {
     if (entityId) { clauses.push('EXISTS(SELECT 1 FROM session_task_messages l JOIN history_messages m USING(message_id) JOIN memory_entity_sources e USING(evidence_id) WHERE l.session_task_id=t.session_task_id AND e.entity_id=?)');params.push(entityId) }
     const rows=this.db.prepare(`SELECT t.*,s.system,s.external_id,h.title AS session_title FROM session_tasks t JOIN session_refs s USING(session_ref_id) JOIN history_sessions h USING(session_ref_id) WHERE ${clauses.join(' AND ')} ORDER BY t.last_activity_at DESC,t.session_task_id`).all(...params)
     const records=[]
-    for(const row of rows) {
-      const indexMatch=!query || matchesSearchTerms([row.title,row.goal,row.summary].join(' '),terms)
-      const hits=rawSearch && query ? this.db.prepare(`SELECT m.message_id,m.evidence_id,m.occurred_at,f.text FROM session_task_messages l JOIN history_messages m USING(message_id) JOIN evidence_fts f USING(evidence_id) WHERE l.session_task_id=? AND (? IS NULL OR m.occurred_at>=?) AND (? IS NULL OR m.occurred_at<=?)`).all(row.session_task_id,rawWithinRange?from:null,rawWithinRange?from:null,rawWithinRange?to:null,rawWithinRange?to:null).filter(item=>matchesSearchTerms(item.text,terms)) : []
-      if(!indexMatch && !hits.length) continue
-      const activity=this.db.prepare('SELECT MAX(m.occurred_at) AS at FROM session_task_messages l JOIN history_messages m USING(message_id) WHERE l.session_task_id=? AND (? IS NULL OR m.occurred_at>=?) AND (? IS NULL OR m.occurred_at<=?)').get(row.session_task_id,from,from,to,to).at
-      records.push({version:row.context_version,firstActivityAt:row.first_activity_at,lastActivityAt:row.last_activity_at,extractionPending:row.context_version!==row.extracted_version,id:row.session_task_id,type:'session-task',title:row.title,content:row.goal,summary:row.summary,state:row.state,recordedAt:activity,sessionId:row.external_id,sessionTitle:row.session_title,sourceSystem:row.system,matchCount:hits.length,matches:hits.slice(0,5).map(hit=>({evidenceId:hit.evidence_id,occurredAt:hit.occurred_at,snippet:hit.text.slice(0,240)})),score:indexMatch?2:1})
+    const needsRaw = !!(rawSearch && query && terms.length)
+    const candidates = new Map()
+    for (const row of rows) {
+      const indexMatch = !query || matchesSearchTerms([row.title,row.goal,row.summary].join(' '),terms)
+      if (indexMatch || needsRaw) candidates.set(row.session_task_id, { row, indexMatch, activity: null, count: 0, matches: [] })
+    }
+    const candidateIds = JSON.stringify([...candidates.keys()])
+    const evidenceMessages = new Map()
+    // Activity uses the requested range even when raw matches may use the entire task.
+    if (candidates.size && !needsRaw) {
+      for (const item of this.db.prepare(`SELECT l.session_task_id,MAX(m.occurred_at) AS activity
+        FROM json_each(?) ids JOIN session_task_messages l ON l.session_task_id=ids.value JOIN history_messages m USING(message_id)
+        WHERE (? IS NULL OR m.occurred_at>=?) AND (? IS NULL OR m.occurred_at<=?) GROUP BY l.session_task_id`).iterate(candidateIds,from,from,to,to)) candidates.get(item.session_task_id).activity = item.activity
+    } else if (candidates.size) for (const message of this.db.prepare(`SELECT l.session_task_id,m.message_id,m.evidence_id,m.occurred_at
+      FROM json_each(?) ids JOIN session_task_messages l ON l.session_task_id=ids.value JOIN history_messages m USING(message_id)`).iterate(candidateIds)) {
+      const candidate = candidates.get(message.session_task_id)
+      const inRange = (from === null || message.occurred_at !== null && message.occurred_at >= from) && (to === null || message.occurred_at !== null && message.occurred_at <= to)
+      if (inRange && message.occurred_at !== null && (candidate.activity === null || message.occurred_at > candidate.activity)) candidate.activity = message.occurred_at
+      if (message.evidence_id && (!rawWithinRange || inRange)) {
+        const owners = evidenceMessages.get(message.evidence_id) ?? []
+        owners.push(message)
+        evidenceMessages.set(message.evidence_id, owners)
+      }
+    }
+    // Snippets use SQLite BINARY message-ID order, then FTS rowid; result ranking is separate.
+    const compareHits = (a, b) => Buffer.compare(Buffer.from(a.message_id), Buffer.from(b.message_id)) || a.rowid - b.rowid
+    if (evidenceMessages.size) for (const hit of this.db.prepare('SELECT rowid,evidence_id,text FROM evidence_fts').iterate()) {
+      const owners = evidenceMessages.get(hit.evidence_id)
+      if (!owners || !matchesSearchTerms(hit.text, terms)) continue
+      const snippet = hit.text.slice(0, 240)
+      for (const message of owners) {
+        const candidate = candidates.get(message.session_task_id)
+        candidate.count++
+        candidate.matches.push({ ...message, rowid: hit.rowid, snippet })
+        candidate.matches.sort(compareHits)
+        if (candidate.matches.length > 5) candidate.matches.pop()
+      }
+    }
+    for (const { row, indexMatch, activity, count, matches } of candidates.values()) {
+      if (!indexMatch && !count) continue
+      records.push({version:row.context_version,firstActivityAt:row.first_activity_at,lastActivityAt:row.last_activity_at,extractionPending:row.context_version!==row.extracted_version,id:row.session_task_id,type:'session-task',title:row.title,content:row.goal,summary:row.summary,state:row.state,recordedAt:activity,sessionId:row.external_id,sessionTitle:row.session_title,sourceSystem:row.system,matchCount:count,matches:matches.map(hit=>({evidenceId:hit.evidence_id,occurredAt:hit.occurred_at,snippet:hit.snippet})),score:indexMatch?2:1})
     }
     records.sort((a,b)=>(sort==='recent'?0:b.score-a.score) || String(b.recordedAt??'').localeCompare(String(a.recordedAt??'')) || a.id.localeCompare(b.id))
     const rawClauses=["m.ownership IN ('unprocessed','unresolved','no-task')"],rawParams=[]
@@ -213,10 +248,18 @@ export class SessionHistory {
     if(state){rawClauses.push('m.ownership=?');rawParams.push(state)}
     if(from){rawClauses.push('m.occurred_at>=?');rawParams.push(from)}
     if(to){rawClauses.push('m.occurred_at<=?');rawParams.push(to)}
-    const rawMatches=rawSearch&&terms.length&&!taskId?this.db.prepare(`SELECT m.*,s.system,s.external_id FROM history_messages m JOIN session_refs s USING(session_ref_id) WHERE ${rawClauses.join(' AND ')} ORDER BY m.occurred_at DESC,m.message_id`).all(...rawParams).filter(m=>matchesSearchTerms(this.body(m),terms)):[]
-    const supplementary=rawMatches.slice(offset,offset+limit).map(m=>({id:m.message_id,type:'raw-hit',state:m.ownership,content:this.body(m).slice(0,240),evidenceId:m.evidence_id,sessionId:m.external_id,sourceSystem:m.system,recordedAt:m.occurred_at}))
-    return {records:records.slice(offset,offset+limit),total:records.length,hasMore:records.length>offset+limit,supplementary,supplementaryTotal:rawMatches.length,supplementaryHasMore:rawMatches.length>offset+limit,range:{from,to,sourceSystem,sessionId,rawSearch,rawWithinRange,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone},coverage:this.coverage()}
+    let supplementaryTotal = 0
+    const supplementary = []
+    const pageStart = Math.trunc(offset), pageEnd = Math.trunc(offset + limit)
+    if (rawSearch && terms.length && !taskId) for (const message of this.db.prepare(`SELECT m.*,s.system,s.external_id FROM history_messages m JOIN session_refs s USING(session_ref_id) WHERE ${rawClauses.join(' AND ')} ORDER BY m.occurred_at DESC,m.message_id`).iterate(...rawParams)) {
+      const text = this.body(message)
+      if (!matchesSearchTerms(text, terms)) continue
+      if (supplementaryTotal >= pageStart && supplementaryTotal < pageEnd) supplementary.push({id:message.message_id,type:'raw-hit',state:message.ownership,content:text.slice(0,240),evidenceId:message.evidence_id,sessionId:message.external_id,sourceSystem:message.system,recordedAt:message.occurred_at})
+      supplementaryTotal++
+    }
+    return {records:records.slice(offset,offset+limit),total:records.length,hasMore:records.length>offset+limit,supplementary,supplementaryTotal,supplementaryHasMore:supplementaryTotal>offset+limit,range:{from,to,sourceSystem,sessionId,rawSearch,rawWithinRange,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone},coverage:this.coverage()}
   }
+
   get(id, {offset=0,limit=30,version=null}={}) {
     const task=this.db.prepare('SELECT t.*,s.system,s.external_id,h.title AS session_title FROM session_tasks t JOIN session_refs s USING(session_ref_id) JOIN history_sessions h USING(session_ref_id) WHERE session_task_id=?').get(id)
     if(!task)return null

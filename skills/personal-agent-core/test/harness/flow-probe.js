@@ -14,6 +14,7 @@ export async function runFlowProbe(ctx,root) {
   let disposeTerminal=()=>{}
   try {
     await service.initialize()
+    const defaultWorkspace = (await ctx.workspaceController.initializeDefault(service.workerLifetime.signal)).workspace
     const directoryRoot=await realpath(await mkdtemp(path.join(root,'flow-directories-')))
     const directoryB=path.join(directoryRoot,'B'),directoryC=path.join(directoryRoot,'C'),directoryD=path.join(directoryRoot,'D')
     await Promise.all([directoryB,directoryC,directoryD].map(directory=>mkdir(directory)))
@@ -77,6 +78,8 @@ export async function runFlowProbe(ctx,root) {
     assert.equal(repeated.repeated,true)
     assert.equal(repeated.executionId,third.executionId)
     const extra=await service.executeObjective({objective:'Separate notification fixture',requestId:'extra-spawn',intent:'new',mutatesWorkspace:false,modelProvider:selection.provider,model:selection.model,effort:'off'},{agent:main})
+    assert.equal(executionDirectory(extra.executionId), defaultWorkspace.path)
+    assert.notEqual(defaultWorkspace.path, root)
     const extraEnd=Promise.withResolvers();childEndings.set(extra.childId,extraEnd)
     const extraRun=await service.executeObjective({taskId:extra.taskId,objective:'Continue second child',requestId:'extra-continue',mutatesWorkspace:false},{agent:main})
     await extraEnd.promise
@@ -86,7 +89,7 @@ export async function runFlowProbe(ctx,root) {
     assert.ok(receipts[first.childId]>=0 && receipts[extra.childId]>=0)
     assert.equal(service.database.db.prepare('SELECT execution_state FROM executions WHERE execution_id=?').get(extraRun.executionId).execution_state,'succeeded')
     const noticeAgent=main
-    service.mainSession={binding:()=>({session_id:created.sessionId}),ensure:async()=>({agent:noticeAgent,sessionId:created.sessionId,version:1})}
+    service.mainSession={reset:{operation:null},binding:()=>({session_id:created.sessionId}),ensure:async()=>({agent:noticeAgent,sessionId:created.sessionId,version:1})}
     const noticeEnd=Promise.withResolvers();endings.set(created.sessionId,noticeEnd)
     await service.results.kick()
     await noticeEnd.promise
@@ -136,7 +139,13 @@ export async function runFlowProbe(ctx,root) {
     assert.equal(protection.resource_key,`workspace:${directoryC}`)
     assert.ok(protection.workspace_baseline_id)
     assert.equal(service.buildCandidates({taskId:first.taskId})[0].cwd,directoryC)
-    const snapshot={internalWorkPreservesExecutor:true,releasedChildContinued:true,ordinarySessionContinued:true,originalPresetPreserved:true,foreignTreeBlocked:true,duplicateRequestSuppressed:true,resultsDeliveredOnce:true,multipleChildReceiptsPreserved:true,acceptancePending:true,inheritedHeaderIgnored:true,coldDirectoryRetained:true,coldDirectorySwitched:true,multipleDirectoryChangesObserved:true,executionDirectoriesPreserved:true,switchedWorkspaceProtected:true}
+    service.updateRuntimeSettings({allowedWorkspaceRoots:[directoryD]})
+    const beforeBlocked = service.database.db.prepare('SELECT COUNT(*) AS n FROM dsh_execution_runs').get().n
+    await assert.rejects(service.executeObjective({taskId:first.taskId,objective:'Blocked continuation',requestId:'allowlist-block'},{agent:main}),{code:'WORKER_WORKSPACE_NOT_ALLOWED'})
+    await assert.rejects(service.executeObjective({objective:'Blocked new worker',intent:'new',requestId:'allowlist-block-new'},{agent:main}),{code:'WORKER_WORKSPACE_NOT_ALLOWED'})
+    assert.equal(service.database.db.prepare('SELECT COUNT(*) AS n FROM dsh_execution_runs').get().n,beforeBlocked)
+    service.updateRuntimeSettings({allowedWorkspaceRoots:[]})
+    const snapshot={nativeDefaultWorkspaceUsed:true,sharedWorkspaceAllowlistEnforced:true,internalWorkPreservesExecutor:true,releasedChildContinued:true,ordinarySessionContinued:true,originalPresetPreserved:true,foreignTreeBlocked:true,duplicateRequestSuppressed:true,resultsDeliveredOnce:true,multipleChildReceiptsPreserved:true,acceptancePending:true,inheritedHeaderIgnored:true,coldDirectoryRetained:true,coldDirectorySwitched:true,multipleDirectoryChangesObserved:true,executionDirectoriesPreserved:true,switchedWorkspaceProtected:true}
     assert.deepEqual(snapshot,JSON.parse(await readFile(new URL('./flow-expected.json',import.meta.url),'utf8')))
     return snapshot
   } finally {disposeEvents();disposeTerminal();await service.dispose();await projection.dispose()}

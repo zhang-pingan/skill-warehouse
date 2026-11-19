@@ -973,7 +973,7 @@ test('Codex execution rejects workspaces outside the configured allowlist', asyn
     enableExecution(f.service, 'codex.new_thread.execute')
     await assert.rejects(
       operatorOperate(f.service, { action: 'execute', requestId: 'outside-1', objective: 'Touch another directory', workspacePath: outside, intent: 'new' }),
-      /outside the configured Codex workspace allowlist/,
+      /工作目录不在允许范围内/,
     )
     assert.equal(f.service.database.db.prepare('SELECT COUNT(*) AS count FROM executions').get().count, 0)
   } finally {

@@ -19,10 +19,11 @@ export function profileCheckoutManifest(checkout) {
 }
 
 /** Measure one cold process and await termination; all persistence lives below directory. */
-export async function runScaleProfile({ checkout, source, directory, seedDatabase, count, repetition, output }) {
+export async function runScaleProfile({ checkout, source, directory, seedDatabase, count, repetition, output, queries = null }) {
   for (const name of ['harness-home', 'codex-home', 'user-home', 'workspace', 'data']) await mkdir(path.join(directory, name), { recursive: true, mode: 0o700 })
   directory = await realpath(directory)
   copyFileSync(seedDatabase, path.join(directory, 'data', 'ledger.sqlite'))
+  if (queries) await writeFile(path.join(directory, 'profile-queries.json'), JSON.stringify(queries) + '\n', { flag: 'wx' })
   const patchPath = path.join(directory, 'scale.patch.json')
   await writeFile(patchPath, JSON.stringify([
     { id: 'hmr', disabled: true }, { id: 'session-title-llm', disabled: true },
@@ -45,6 +46,7 @@ export async function runScaleProfile({ checkout, source, directory, seedDatabas
     '--profile', 'web', '--patch', patchPath, '--no-open', '--port', '0']
   const logPath = path.join(output, `${count}-profile-${repetition}.log`)
   const started = performance.now()
+  const spawnedAtEpochMs = Date.now()
   const child = spawn(process.execPath, args, { cwd: path.join(directory, 'workspace'), stdio: ['ignore', 'pipe', 'pipe'],
     env: { PATH: process.env.PATH, TMPDIR: directory, TZ: 'UTC', LANG: 'C.UTF-8', HOME: path.join(directory, 'user-home'),
       DSH_HOME: path.join(directory, 'harness-home'), CODEX_HOME: path.join(directory, 'codex-home'),
@@ -70,7 +72,8 @@ export async function runScaleProfile({ checkout, source, directory, seedDatabas
       catch (failure) { if (failure.code !== 'ENOENT') throw failure }
       if (!ready) await Promise.race([delay(25), closed])
     }
-    ready.spawnToReadyMs = performance.now() - started
+    ready.spawnToProbeFinishedMs = performance.now() - started
+    ready.spawnToReadyMs = ready.healthReadyAtEpochMs - spawnedAtEpochMs
   } catch (failure) { error = { name: failure.name, message: failure.message, stack: failure.stack } }
   finally {
     if (!exitState) child.kill('SIGTERM')

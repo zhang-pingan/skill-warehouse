@@ -1,3 +1,4 @@
+import { normalizeWorkspaceRoots } from './worker-workspace.js'
 import { WECHAT_DEFAULTS, validateWechatSetting } from './wechat-config.js'
 import { WORKER_PRIORITIES } from './worker-policy.js'
 /** Runtime-editable preferences for background work and history import. */
@@ -15,6 +16,7 @@ export const RUNTIME_SETTING_KEYS = Object.freeze([
   'routeAmbiguityGap',
   'backgroundModelPolicy',
   'defaultWorkerPriority',
+  'allowedWorkspaceRoots',
   'workerModelPolicies',
   'workerCapabilities',
   'routeCandidateLimit',
@@ -96,6 +98,7 @@ export function defaultRuntimeSettings(config) {
     routeAmbiguityGap: config.routeAmbiguityGap,
     backgroundModelPolicy: config.backgroundModelPolicy,
     defaultWorkerPriority: config.defaultWorkerPriority,
+    allowedWorkspaceRoots: [...(config.allowedWorkspaceRoots ?? [])],
     workerModelPolicies: config.workerModelPolicies,
     workerCapabilities: config.workerCapabilities,
     routeCandidateLimit: config.routeCandidateLimit,
@@ -152,6 +155,10 @@ export function resolveRuntimeSettings(input, base) {
   for (const key of RUNTIME_SETTING_KEYS) {
     if (Object.hasOwn(input, key)) value[key] = input[key]
     if (validateWechatSetting(key, value[key])) continue
+    if (key === 'allowedWorkspaceRoots') {
+      value[key] = normalizeWorkspaceRoots(value[key])
+      continue
+    }
     if (key === 'mainSessionTitle') {
       if (typeof value[key] !== 'string' || /[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u.test(value[key])) throw new TypeError('主会话名称不能包含控制字符。')
       value[key] = value[key].replace(/\s+/gu, ' ').trim()

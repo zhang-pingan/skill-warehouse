@@ -1,3 +1,4 @@
+import { normalizeWorkspaceRoots } from './worker-workspace.js'
 import { WECHAT_DEFAULTS } from './wechat-config.js'
 import { defaultRuntimeSettings, resolveRuntimeSettings } from './runtime-settings.js'
 import { migrateWorkerSettings } from './worker-policy.js'
@@ -30,13 +31,9 @@ export function resolveConfig(input = {}, env = process.env) {
     ?? path.join(os.homedir(), '.dsh', 'personal-agent-core'))
   const codexHome = path.resolve(input.codexHome ?? env.CODEX_HOME ?? path.join(os.homedir(), '.codex'))
   const configuredRoots = input.allowedWorkspaceRoots ?? (env.DSH_PERSONAL_AGENT_ALLOWED_WORKSPACE_ROOTS ? env.DSH_PERSONAL_AGENT_ALLOWED_WORKSPACE_ROOTS.split(path.delimiter) : [])
-  if (!Array.isArray(configuredRoots)) throw new Error('allowedWorkspaceRoots must be an array')
   const operatorToken = input.operatorToken ?? env.DSH_PERSONAL_AGENT_OPERATOR_TOKEN ?? null
   if (operatorToken !== null && (typeof operatorToken !== 'string' || operatorToken.length < 32)) throw new Error('operatorToken must be null or at least 32 characters')
-  const allowedWorkspaceRoots = [...new Set(configuredRoots.map(root => {
-    if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('Every allowed workspace root must be an absolute path')
-    return path.resolve(root)
-  }))]
+  const allowedWorkspaceRoots = normalizeWorkspaceRoots(configuredRoots)
   const dshWorkerPresets = workerPresets(input.dshWorkerPresets)
   const routeResumeThreshold = input.routeResumeThreshold ?? 0.86
   if (!Number.isFinite(routeResumeThreshold) || routeResumeThreshold < 0 || routeResumeThreshold > 1) throw new TypeError('routeResumeThreshold must be from 0 to 1')
@@ -52,6 +49,8 @@ export function resolveConfig(input = {}, env = process.env) {
     workerModelPolicies: input.workerModelPolicies ?? {},
     workerCapabilities: input.workerCapabilities ?? { dsh_subagent: [], codex: [] },
     workerSettingsMigration: migrated.migration ?? input.workerSettingsMigration ?? null,
+    readQueryQueueLimit: positiveInteger(input, 'readQueryQueueLimit', 32),
+    readQueryTimeoutMs: positiveInteger(input, 'readQueryTimeoutMs', 30000),
     routeCandidateLimit: positiveInteger(input, 'routeCandidateLimit', 50),
     modelPolicies: input.modelPolicies ?? {},
     semanticRoutingEnabled: bool(input.semanticRoutingEnabled, true),

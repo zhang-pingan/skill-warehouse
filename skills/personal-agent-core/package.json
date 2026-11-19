@@ -23,12 +23,12 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "test:evaluation": "node --test test/evaluation.test.js",
+    "test": "node --test test/*.test.js test/evaluation/*.test.js",
+    "test:evaluation": "node --test test/evaluation/*.test.js",
     "eval:baseline": "node test/evaluation/run.js",
     "eval:model": "node test/evaluation/run-model.js",
     "test:contract": "node --test test/adapter.test.js",
-    "check": "node --check index.js && node --check client.js && node --test test/*.test.js"
+    "check": "node --check index.js && node --check client.js && node --test test/*.test.js test/evaluation/*.test.js"
   },
   "dependencies": {
     "proper-lockfile": "4.1.2",

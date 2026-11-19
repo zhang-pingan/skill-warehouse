@@ -1,3 +1,4 @@
+import { registerSourceText } from './source-text.js'
 import { readFileSync, readdirSync, mkdirSync, copyFileSync, statSync, lstatSync, writeFileSync, existsSync, rmSync, chmodSync, openSync, closeSync, constants } from 'node:fs'
 import path from 'node:path'
 import { gunzipSync } from 'node:zlib'
@@ -30,13 +31,7 @@ export class LedgerDatabase {
     this.closed = false
     try {
       this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA trusted_schema=OFF;')
-      this.db.function('source_text', { deterministic: true }, (content, compressed, hash) => {
-        if (content !== null) return Buffer.from(content).toString('utf8')
-        if (compressed === null) throw new Error('Source body is unavailable; retry after restoring the archive')
-        const body=gunzipSync(compressed, { maxOutputLength: this.config.maxHistoryRecordBytes })
-        if (sha256(body)!==hash) throw new Error('Archived source hash mismatch; restore a verified backup and retry')
-        return body.toString('utf8')
-      })
+      registerSourceText(this.db, () => this.config.maxHistoryRecordBytes)
       this.ensureSchema()
       this.seedFeatures()
       return this

@@ -499,14 +499,15 @@ test('a cold DSH setup failure with uncertain native cleanup retains the workspa
 
 test('a new DSH worker without a directory records the effective directory without adding a write lease',async t=>{
   const {service,root}=await fixture(t)
-  const directory=realpathSync(root)
+  const directory=path.join(realpathSync(root),'default-workspace')
+  mkdirSync(directory)
   let adopted
-  service.context={workingDirectory:{ensure:async()=>directory},subagents:{startActivation:async args=>{
+  service.context={workspaceController:{initializeDefault:async()=>({workspace:{path:directory}})},workingDirectory:{ensure:async()=>{throw new Error('must not inherit main directory')}},subagents:{startActivation:async args=>{
     adopted=args.cwd
     return {childId:args.childId,result:Promise.resolve({stopReason:'completed',output:[]}),dispose:async()=>{}}
   }}}
   service.recordDshUsage=async()=>{}
-  const result=await service.executeObjective({objective:'Readonly default directory',intent:'new',mutatesWorkspace:false,requestId:'default-directory'},{agent:{session:{id:'main',seq:1,header:{cwd:directory}}}})
+  const result=await service.executeObjective({objective:'Readonly default directory',intent:'new',mutatesWorkspace:false,requestId:'default-directory'},{agent:{session:{id:'main',seq:1,header:{cwd:root}}}})
   assert.equal(result.stopReason,'completed')
   assert.equal(adopted,directory)
   assert.equal(service.buildCandidates({taskId:result.taskId})[0].cwd,directory)
@@ -922,4 +923,67 @@ test('an explicit DSH directory replaces a removed native directory on the same 
   const result=await service.executeObjective({taskId:f.task.taskId,objective:'Continue',workspacePath:f.next,mutatesWorkspace:true,requestId:'replace-removed-dsh'},{agent:f.main})
   assert.equal(result.childId,f.worker.session.id,JSON.stringify(result))
   assert.deepEqual(f.calls,[['set',f.worker.session.id,f.next],['deliver',f.next]])
+})
+
+for (const roots of ['empty','restricted']) test(`DSH continuation applies the ${roots} shared allowlist before switching or delivering`, async t => {
+  const {service,root}=await fixture(t)
+  const f=dshDirectoryFixture(service,root)
+  service.updateRuntimeSettings({allowedWorkspaceRoots:roots==='empty'?[]:[f.next]})
+  if(roots==='restricted') {
+    await assert.rejects(service.executeObjective({taskId:f.task.taskId,objective:'Continue',requestId:'deny-current'},{agent:f.main}),{code:'WORKER_WORKSPACE_NOT_ALLOWED'})
+    assert.deepEqual(f.calls,[])
+  }
+  const directory=roots==='empty'?f.current:f.next
+  const result=await service.executeObjective({taskId:f.task.taskId,objective:'Continue',requestId:'allow-current',...(roots==='restricted'?{workspacePath:directory}:{})},{agent:f.main})
+  assert.equal(result.childId,f.worker.session.id)
+  assert.deepEqual(f.calls.at(-1),['deliver',directory])
+  const location=service.database.db.prepare('SELECT l.canonical_path FROM executions e JOIN project_locations l ON l.location_id=e.workspace_location_id WHERE execution_id=?').get(result.executionId)
+  assert.equal(location.canonical_path,directory)
+})
+
+test('a new DSH worker outside the shared allowlist never starts and does not fall back',async t=>{
+  const {service,root}=await fixture(t)
+  const allowed=path.join(root,'allowed');mkdirSync(allowed)
+  service.updateRuntimeSettings({allowedWorkspaceRoots:[allowed]})
+  let started=0
+  service.context={workspaceController:{initializeDefault:async()=>({workspace:{path:root}})},subagents:{startActivation:async()=>{started++;throw new Error('unexpected start')}}}
+  for(const explicit of [false,true])await assert.rejects(service.executeObjective({objective:'New task',intent:'new',requestId:`deny-${explicit}`,...(explicit?{workspacePath:root}:{})},{agent:{session:{id:'main',seq:0,header:{cwd:root}}}}),{code:'WORKER_WORKSPACE_NOT_ALLOWED'})
+  assert.equal(started,0)
+  assert.equal(service.database.db.prepare('SELECT COUNT(*) AS n FROM executions').get().n,0)
+})
+
+test('a new Codex worker uses its native configured default and records the exact dispatched directory',async t=>{
+  const {service,root}=await fixture(t,{defaultWorkerPriority:'codex',allowedWorkspaceRoots:[]})
+  const calls=adapter(service,root),native=service.adapter.request
+  const configured=path.join(root,'codex-projectless')
+  service.adapter.request=async(method,params)=>{
+    if(method==='config/read')return {config:{desktop:{projectlessWorkspaceRoot:configured}}}
+    if(method==='configRequirements/read')return {requirements:null}
+    if(method==='thread/start'){calls.push({method,params});return {cwd:params.cwd,thread:{id:'new-default',cwd:params.cwd}}}
+    return native(method,params)
+  }
+  const result=await service.executeObjective({objective:'Build a report',intent:'new',requestId:'native-default'},{codexMutationAuthority:true,callerWorkspaceRoot:root})
+  const start=calls.find(call=>call.method==='thread/start'),turn=calls.find(call=>call.method==='turn/start')
+  assert.match(start.params.cwd,new RegExp(`${configured}/\\d{4}-\\d{2}-\\d{2}/build-a-report$`))
+  assert.equal(turn.params.cwd,start.params.cwd)
+  assert.deepEqual(start.params.runtimeWorkspaceRoots,[start.params.cwd])
+  const execution=result.executions.at(-1)
+  const saved=service.database.db.prepare(`SELECT l.canonical_path,b.workspace_location_id AS baseline_location,e.workspace_location_id,l.canonical_path,k.resource_key FROM executions e JOIN project_locations l ON l.location_id=e.workspace_location_id JOIN workspace_baselines b ON b.baseline_id=e.workspace_baseline_id JOIN leases k USING(execution_id) WHERE execution_id=?`).get(execution.executionId)
+  assert.equal(saved.canonical_path,turn.params.cwd)
+  assert.equal(saved.baseline_location,saved.workspace_location_id)
+  assert.equal(saved.resource_key,`workspace:${turn.params.cwd}`)
+})
+
+test('Codex continuation applies the latest allowlist to the effective directory before any turn',async t=>{
+  const {service,root}=await fixture(t)
+  const allowed=path.join(root,'allowed');mkdirSync(allowed)
+  const old=await history(service,'codex','outside-thread',root,'Continue an existing task')
+  const calls=adapter(service,root)
+  service.updateRuntimeSettings({allowedWorkspaceRoots:[allowed]})
+  await assert.rejects(service.executeObjective({sessionTaskId:old.session_task_id,objective:'Continue',requestId:'deny-native'},{codexMutationAuthority:true}),{code:'WORKER_WORKSPACE_NOT_ALLOWED'})
+  assert.equal(calls.some(call=>['thread/start','thread/fork','turn/start'].includes(call.method)),false)
+  service.updateRuntimeSettings({allowedWorkspaceRoots:[]})
+  const result=await service.executeObjective({sessionTaskId:old.session_task_id,objective:'Continue',requestId:'allow-native'},{codexMutationAuthority:true})
+  assert.equal(result.threadId,'outside-thread')
+  assert.equal(calls.at(-1).params.cwd,realpathSync(root))
 })

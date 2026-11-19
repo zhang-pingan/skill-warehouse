@@ -112,7 +112,6 @@ async function main() {
   const familyById = new Map(corpus.families.map(family => [family.id, family]))
   const visibleCorpus = { ...corpus, families: corpus.families.filter(family => protocol.splits.includes(family.split)) }
   const sourceIdentity = sourceManifest(source)
-  const { discoverExecutionTargets } = await import(pathToFileURL(path.join(source, 'lib/execution-discovery.js')))
   mkdirSync(output, { recursive: true })
   const manifest = { startedAt: new Date().toISOString(), protocol, dataset, source: sourceIdentity, sourcePath: source,
     corpusSha256: digest(readFileSync(path.join(import.meta.dirname, 'corpus.json'))), casesSha256: digest(readFileSync(path.join(import.meta.dirname, 'cases.json'))),
@@ -133,7 +132,7 @@ async function main() {
           const measured = performance.now()
           let value, error = null
           try {
-            value = lane === 'discovery' ? discoverExecutionTargets(fixture.service, { ...request, objective: item.query, limit })
+            value = lane === 'discovery' ? await fixture.service.readQuery('discover', { ...request, objective: item.query, limit })
               : await fixture.service.operate({ action: lane === 'history' ? 'search_history' : 'memory_search', ...request, limit })
           } catch (failure) { error = { name: failure.name, message: failure.message, code: failure.code ?? null } }
           const elapsedMs = performance.now() - measured

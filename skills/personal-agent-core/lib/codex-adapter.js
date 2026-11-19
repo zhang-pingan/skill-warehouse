@@ -5,7 +5,7 @@ import { newId, sha256 } from './ids.js'
 
 const READ_ONLY_METHODS = new Set([
   'thread/list', 'thread/read', 'thread/loaded/list', 'thread/turns/list', 'thread/items/list',
-  'thread/queue/list', 'model/list', 'account/read', 'skills/list', 'config/read',
+  'thread/queue/list', 'model/list', 'account/read', 'skills/list', 'config/read', 'configRequirements/read',
 ])
 const MUTATION_METHODS = new Set([
   'thread/start', 'thread/resume', 'thread/fork', 'thread/archive', 'thread/unarchive', 'thread/delete', 'thread/unsubscribe',

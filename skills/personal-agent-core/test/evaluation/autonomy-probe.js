@@ -161,8 +161,7 @@ export async function apply(ctx) {
       questionDispose=ctx.on('user-questions/request',observeQuestionRequest,{prepend:true})
       target = await service.mainSession.ensure()
       target.agent.model.select(selection)
-      service.config = Object.freeze({...service.config,allowedWorkspaceRoots:[...service.config.allowedWorkspaceRoots,workspace]})
-      service.database.config = service.config
+      service.updateRuntimeSettings({allowedWorkspaceRoots:[...service.runtimeSettings.allowedWorkspaceRoots,workspace]})
       await writeFile(path.join(workspace,'source.json'),sourceText)
       workspaceInitial=await snapshotWorkspace(workspace)
       const backend = input.backend ?? 'dsh'

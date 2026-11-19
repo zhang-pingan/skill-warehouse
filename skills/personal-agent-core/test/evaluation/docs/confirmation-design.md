@@ -6,7 +6,7 @@ description: 按独立来源族规划优化确认样本，冻结质量、非劣�
 
 本设计规定检索优化和任务上下文优化在应用前需要什么证据。冻结设计是 B0 的准备条件；生成足量未见来源族、比较固定候选并通过全部门槛，是以后应用优化的条件。B0 不需要先完成一个尚不存在的优化候选。现有 12 族封存集、48 族探索与验证集不能据此宣称已具有确认 5 个百分点收益或 1 个百分点非劣的统计功效。
 
-机器可读规则在 [confirmation-design.json](confirmation-design.json)，数值由 [confirmation-design-analysis.js](confirmation-design-analysis.js) 计算，已执行结果在 [confirmation-design-analysis.json](results/confirmation-design-analysis.json)。本设计和计算没有读取封存题目、没有运行封存集，也没有修改生产行为。
+机器可读规则在 [confirmation-design.json](../confirmation-design.json)，数值由 [confirmation-design-analysis.js](../confirmation-design-analysis.js) 计算，已执行结果在 [confirmation-design-analysis.json](../results/confirmation-design-analysis.json)。本设计和计算没有读取封存题目、没有运行封存集，也没有修改生产行为。
 
 ## 样本与可推广范围
 

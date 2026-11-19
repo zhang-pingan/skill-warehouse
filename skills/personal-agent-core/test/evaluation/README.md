@@ -4,7 +4,25 @@ description: 合成历史评测集、生产检索基线、模型探针及可复�
 
 # 历史与记忆评测
 
-此目录用合成资料测量私人助理现有的历史检索、记忆召回和执行目标候选发现。数据和评分工具不属于插件 bundle，不读取日常账本，不向日常主会话或微信派发任务。原生测量使用独立存储中的真实主会话和 worker。当前结果与未验证部分见[基线报告](../../../dsh-personal-assistant/docs/plans/baseline-report.md)。
+此目录用合成资料测量私人助理现有的历史检索、记忆召回和执行目标候选发现。数据和评分工具不属于插件 bundle，不读取日常账本，不向日常主会话或微信派发任务。原生测量使用独立存储中的真实主会话和 worker。当前结果与未验证部分见[基线报告](docs/baseline-report.md)。
+
+## 文档与目录
+
+评测体系的文档、运行代码、语料和结果均由本目录维护；插件功能与运维说明见[插件入口](../../README.md)。
+
+| 入口 | 内容 |
+| --- | --- |
+| [优化方案](docs/memory-retrieval-context-plan.md) | 基线、前置性能工作及第 2、3 项的执行顺序和应用规则 |
+| [B0 基线报告](docs/baseline-report.md) | 当前指标、测量条件、失败及适用范围 |
+| [检索优化验证](docs/retrieval-validation.md) | 第 2 项候选实验、验证和应用记录 |
+| [任务上下文优化验证](docs/context-validation.md) | 第 3 项候选实验、验证和应用记录 |
+| [确认样本设计](docs/confirmation-design.md) | 独立来源族、样本规划和统计规则 |
+| [结果目录](results/) | 各批次原始输入、输出、源码快照、审阅及用量 |
+| [B0 汇总目录](results/b0-complete-2026-11-18/) | 基线完成记录、测量来源和自主执行汇总 |
+
+本目录根部的 JavaScript 与 JSON 文件保存执行、评分、评测自检、语料和机器可读协议；`docs/` 保存评测文档，`results/` 保存冻结证据。方案与逐步验证文档仅在任务进行期间维护；任务结束后将可持续使用的规则并入本说明及对应主题，删除临时方案和记录。
+
+B0 使用唯一的[基线报告](docs/baseline-report.md)，完成记录校验该文件。各测量保留实际源码、配置和工具哈希；当前性能与检索数据归入同一个 B0，未重跑的模型和生命周期结果明确标记其测量版本。
 
 ## 数据与分组
 
@@ -22,8 +40,10 @@ description: 合成历史评测集、生产检索基线、模型探针及可复�
 
 ```sh
 npm run test:evaluation
-node test/evaluation/run.js /Users/chelaile/Documents/deepseek-harness/default-workspace/personal-agent-core /Users/chelaile/Documents/deepseek-harness/default-workspace/personal-agent-core/test/evaluation/results/b0-final-retrieval-2026-11-18
+node test/evaluation/run.js /Users/chelaile/Documents/deepseek-harness/default-workspace/personal-agent-core NEW_OUTPUT_DIRECTORY
 ```
+
+`npm run test:evaluation` 运行本目录全部 `*.test.js` 评测自检；插件的 `test` 和 `check` 命令也包含这些检查。
 
 第二条是当前基线的实际命令。复跑必须换一个不存在的结果目录；运行器拒绝覆盖已有清单。也可用 `npm run eval:baseline` 自动生成新的结果目录，或在命令中指定隔离候选源码路径。执行时保持该源码及其依赖不变；清单记录文件哈希、Node/SQLite/CPU 版本与评分规则。
 
@@ -54,7 +74,7 @@ node test/evaluation/run.js /Users/chelaile/Documents/deepseek-harness/default-w
 
 [`run-model.js`](run-model.js) 提供生产 `semanticCandidates` 的小样本测量入口，取每类首个探索来源族的 route 用例，预先登记后重复三次。配置中的 `candidateLimit` 只接受检索协议已有的 10 或 50，省略时为 50；可用 `analysisInputChars` 显式重现已确认的有效输入预算，不修改插件默认值或日常设置。输入、模型结果、原生尝试用量和失败均保存到独立结果目录。没有预期目标的用例不进入目标正确率分母，但仍计入失败、延迟和用量。它不执行原生会话检查或 worker，不代表完整主会话效果。
 
-模型测量使用已配置的 `openai/gpt-6.2-sol`，省略推理等级并沿用 provider 默认值。K=50 采用用户设置的 100,000 字符输入预算，插件源码默认仍为 48,000；预算和候选窗口必须分别记录，配置差异不能当作检索算法收益。调用失败与成功请求均进入基线，结果见[基线报告](../../../dsh-personal-assistant/docs/plans/baseline-report.md#真实模型状态)。
+模型测量使用已配置的 `openai/gpt-6.2-sol`，省略推理等级并沿用 provider 默认值。K=50 采用用户设置的 100,000 字符输入预算，插件源码默认仍为 48,000；预算和候选窗口必须分别记录，配置差异不能当作检索算法收益。调用失败与成功请求均进入基线，结果见[基线报告](docs/baseline-report.md#真实模型状态)。
 
 复跑模型测量可使用结果目录内的 `run-config.json`，其中只有本机路径和模型/候选数量，没有凭据值。传入一个新的输出目录，例如：
 
@@ -104,13 +124,25 @@ node test/evaluation/archive-run.js NEW_OUTPUT_DIR
 
 增量协议固定了被测源码指纹，复现时使用该轮保存的源码快照；新实验须预先登记自己的协议与输出目录。汇总的 `batchMs` 是二十次写入的整批耗时，不能当作单次写入延迟。
 
-[`confirmation-design.md`](confirmation-design.md) 与 [`confirmation-design.json`](confirmation-design.json) 固定后续候选的来源族采样、三次成对重复、应用门槛、区间与跨候选错误率控制。样本量规划由 [`confirmation-design-analysis.js`](confirmation-design-analysis.js) 复现。B0 要求这些规则和对照证据可重现；未来候选的未见确认样本与 A/B 检验在候选固定后执行，不以当前小样本代替正式确认。
+[`confirmation-design.md`](docs/confirmation-design.md) 与 [`confirmation-design.json`](confirmation-design.json) 固定后续候选的来源族采样、三次成对重复、应用门槛、区间与跨候选错误率控制。样本量规划由 [`confirmation-design-analysis.js`](confirmation-design-analysis.js) 复现。B0 要求这些规则和对照证据可重现；未来候选的未见确认样本与 A/B 检验在候选固定后执行，不以当前小样本代替正式确认。
 
 ## 后续比较条件
 
-改进检索前必须保留本基线的源码身份、语料、评分和资源条件；每次只比较一个候选因素。正式比较同时保留单步收益与相对 B0 的累计变化，并以来源族作成对统计。默认质量门槛为提高至少 5 个百分点、95% 成对区间下界大于 0；效率门槛为至少降低 20%，同时满足质量非劣条件；p95 与 token 增幅各不超过 10%，关键回归为 0。完整规则见[方案](../../../dsh-personal-assistant/docs/plans/memory-retrieval-context-plan.md)。
+### B0 性能基线
 
-检索召回提升本身不能放行应用。正式确认样本量须在候选实验前依据主指标、最小收益和来源族方差登记；当前小规模合成集不构成 1 个百分点非劣检验或 5 个百分点收益的功效保证。DSH 目录、Codex 默认兼容、验收证据交付及工具返回等流程故障已修复并验证。B0 指标基线已完成：自主执行、生命周期与启动在当前冻结源码上重测，其余测量按调用路径核验复用，并保留实际源码身份。全部预定重复、失败和限制见[基线报告](../../../dsh-personal-assistant/docs/plans/baseline-report.md)及[完成记录](results/b0-complete-2026-11-18/release-decision.json)。第 2、3 项尚未开始。
+B0 包含单次正文扫描、批量活动时间计算、流式补充分页及独立只读查询线程。完整历史范围、中文子串、英文词边界、Unicode 规范化、排序、分页和来源校验保持一致。现状行为见[历史与记忆](../../docs/history-and-knowledge.md#检索与来源读取)，配置与生命周期见[设置与运维](../../docs/settings-and-operations.md)。本次性能优化属于 B0，不计作第 2 项能力实验收益。
+
+当前[性能结果](results/b0-performance-2026-11-19/summary.json)包含 144 次服务查询、9 次真实 Harness profile 启动、36 次注册工具查询及 540 次增量写入；完整指标与资源限制统一见[基线报告](docs/baseline-report.md#生命周期与性能)。[源码和测量条件](results/b0-performance-2026-11-19/manifest.json)、原始结果及[归档校验](results/b0-performance-2026-11-19/artifacts.json)位于同一结果目录。日常 Desktop 重载插件后采用新代码。
+
+`node test/evaluation/run-performance.js SOURCE NEW_OUTPUT_DIRECTORY HARNESS_CHECKOUT` 依次生成 1k/10k/50k 混合原文，在两种接口上执行精确词、英文广泛匹配、中文广泛匹配和无匹配查询，每种三次独立进程重复，各进程测首次与重复查询。每次查询预算 10 秒；首次包含惰性线程启动。计时排除服务启动、结果序列化、哈希与请求后 GC。5 ms Host 定时器覆盖查询及最终 continuation；真实 profile 经 `dsh` 支持的源码 Web 路径运行，不调用模型。操作系统缓存不强制清空，首次查询不代表冷磁盘查询。
+
+`node test/evaluation/query-thread-equivalence.js OUTPUT_JSON` 对同步业务视图与真实线程比较 620 组完整响应；`node test/evaluation/retrieval-equivalence.js REFERENCE_SOURCE OUTPUT_JSON` 对冻结语义参考源码比较 572 组完整响应。覆盖冷热正文、中英文与 Unicode、筛选、共享消息、候选知识和深分页。参考源码仅用于返回语义回归，不代表另一个性能基线。`retrieval-performance.test.js` 检查扫描工作量、片段及计数规则，`query-thread.test.js` 与 `test/query-reader.test.js` 覆盖一致快照、写后可见、只读约束、取消、限流、超时和线程回收。
+
+资源指标包含整个服务进程及线程，不等于插件独占内存或查询增量。单线程隔离扫描不消除 CPU、内存及结果传输成本，也不保证其他 Host 同步工作没有延迟。指标不能外推为真实个人资料分布、桌面绘制或模型端到端耗时。
+
+改进检索前必须保留本基线的源码身份、语料、评分和资源条件；每次只比较一个候选因素。正式比较同时保留单步收益与相对 B0 的累计变化，并以来源族作成对统计。默认质量门槛为提高至少 5 个百分点、95% 成对区间下界大于 0；效率门槛为至少降低 20%，同时满足质量非劣条件；p95 与 token 增幅各不超过 10%，关键回归为 0。完整规则见[方案](docs/memory-retrieval-context-plan.md)。
+
+检索召回提升本身不能放行应用。正式确认样本量须在候选实验前依据主指标、最小收益和来源族方差登记；当前小规模合成集不构成 1 个百分点非劣检验或 5 个百分点收益的功效保证。DSH 目录、Codex 默认兼容、验收证据交付及工具返回等流程故障已修复并验证。B0 指标基线已完成：检索、规模、启动与增量写入已在当前源码测量；模型与生命周期证据保留原测量源码和适用限制。全部预定重复、失败和限制见[基线报告](docs/baseline-report.md)及[完成记录](results/b0-complete-2026-11-18/release-decision.json)。第 2、3 项尚未开始。
 
 原生 Codex worker 探针支持可选的 `input.operationsAudit: true`：在新建与续接测量后，建立带两个工作区根目录的隔离来源，验证生产执行入口的历史接管、明确分叉和重连续接。返回 `operationsAudit` 中的有效设置、执行目录、来源历史比较及 Thread 关系；这是操作回归验证，不计入已冻结的检索基线。
 

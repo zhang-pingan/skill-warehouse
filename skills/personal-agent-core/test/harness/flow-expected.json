@@ -13,5 +13,7 @@
   "coldDirectorySwitched": true,
   "multipleDirectoryChangesObserved": true,
   "executionDirectoriesPreserved": true,
-  "switchedWorkspaceProtected": true
+  "switchedWorkspaceProtected": true,
+  "nativeDefaultWorkspaceUsed": true,
+  "sharedWorkspaceAllowlistEnforced": true
 }

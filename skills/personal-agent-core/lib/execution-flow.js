@@ -165,7 +165,7 @@ export async function associateExecutionTask(service,args,resolution,{callerWork
   const taskCreated=!task || task.state==='completed' || args.newTask===true
   const independentTask=taskCreated && !resolution.continuing && !resolution.fork
   if (independentTask && args.workspacePath) {
-    const workspacePath=await service.canonicalWorkspacePath(args.workspacePath,{requireAllowed:args.worker==='codex'})
+    const workspacePath=await service.canonicalWorkspacePath(args.workspacePath,{requireAllowed:args.worker!=='internal'})
     if (callerWorkspaceRoot) {
       const root=await service.canonicalWorkspacePath(callerWorkspaceRoot)
       const relative=path.relative(root,workspacePath)

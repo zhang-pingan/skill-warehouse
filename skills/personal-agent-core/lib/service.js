@@ -1,3 +1,6 @@
+import { QueryReader } from './query-reader.js'
+import { dashboardTaskDetail } from './task-detail.js'
+import { canonicalDirectory, assertAllowedDirectory, directoryWithin, codexDefaultWorkspaceRoot, createCodexWorkspace } from './worker-workspace.js'
 import { performance } from 'node:perf_hooks'
 import { setImmediate } from 'node:timers/promises'
 import { BackgroundJobs } from './background-jobs.js'
@@ -9,7 +12,6 @@ import { resolveExecutionIntent, inspectNativeTarget, inspectTaskAdmission, asso
 import { AnalysisRuns } from './analysis-runs.js'
 import { backgroundLanguage } from './session-history.js'
 import { MemorySystem } from './memory-system.js'
-import { realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { LedgerDatabase } from './database.js'
 import { Ledger } from './ledger.js'
@@ -118,6 +120,7 @@ export class PersonalAgentService {
     this.dispatcher = new OutboxDispatcher(this.ledger, this.adapter, { logger: this.logger })
     this.approvals = new ApprovalService(this.ledger, this.adapter)
     this.memory = new MemorySystem(this)
+    this.queryReader = new QueryReader(this.config)
     this.recovery = this.database.recoverLocalState()
     this.adapter.on('serverRequest', request => { if (!this.disposed && !this.memoryInitializationOperation) this.trackOperation(() => this.onServerRequest(request), 'server request') })
     this.adapter.on('notification', notification => { if (!this.disposed && !this.memoryInitializationOperation) this.projectCodexNotification(notification) })
@@ -181,8 +184,11 @@ export class PersonalAgentService {
   async resetMemory() {
     const phase = value => this.backgroundJobs.save({ ...this.backgroundJobs.state('memory-initialization'), phase: value })
     let reconnectCodex = false
+    let readerClosed = false
     this.historyLifetime.abort()
     try {
+      await this.queryReader.close()
+      readerClosed = true
       if (this.wechat) {
         this.wechat.maintenance = true
         await this.wechat.management.catch(() => {})
@@ -220,6 +226,7 @@ export class PersonalAgentService {
       this.recovery = this.database.recoverLocalState()
     } finally {
       if (!this.disposed) {
+        if (readerClosed) this.queryReader = new QueryReader(this.config)
         this.historyLifetime = new AbortController()
         this.analysisRuns = new AnalysisRuns(this.database.db, this.context, { signal: this.historyLifetime.signal })
         if (reconnectCodex) {
@@ -1015,52 +1022,7 @@ export class PersonalAgentService {
     return executionEvaluation(this.database.db)
   }
 
-  dashboardTaskDetail(taskId) {
-    const root = this.database.db.prepare(`SELECT task_id,project_id,objective,task_state,created_at,updated_at,completed_at,acceptance_json
-      FROM tasks WHERE task_id=? AND parent_task_id IS NULL AND ${ASSISTANT_TASK_SOURCE}`).get(taskId)
-    if (!root) {
-      const error = new Error('Top-level assistant task does not exist')
-      error.code = 'ASSISTANT_TASK_NOT_FOUND'
-      error.statusCode = 404
-      throw error
-    }
-    const rows = this.database.db.prepare(`WITH RECURSIVE task_tree(task_id) AS (
-        SELECT task_id FROM tasks WHERE task_id=?
-        UNION ALL SELECT child.task_id FROM tasks child JOIN task_tree ON child.parent_task_id=task_tree.task_id
-      ) SELECT session.session_ref_id,session.system,session.external_id,session.native_status,
-        execution.execution_state,execution.attempt_no,route.semantic_action,route.delivery_action,outbox.params_json
-      FROM task_tree
-      JOIN executions execution ON execution.task_id=task_tree.task_id
-      JOIN execution_sessions mapping ON mapping.execution_id=execution.execution_id
-      JOIN session_refs session ON session.session_ref_id=mapping.session_ref_id
-      LEFT JOIN route_decisions route ON route.route_decision_id=execution.route_decision_id
-      LEFT JOIN outbox ON outbox.execution_id=execution.execution_id
-      WHERE mapping.role IN ('executor','fork_source')
-      ORDER BY session.session_ref_id,execution.attempt_no DESC,COALESCE(execution.started_at,execution.finished_at) DESC`).all(taskId)
-    const workers = new Map()
-    for (const row of rows) {
-      const params = parseJson(row.params_json, {})
-      const route = row.semantic_action && row.delivery_action ? `${row.semantic_action}:${row.delivery_action}` : null
-      let worker = workers.get(row.session_ref_id)
-      if (!worker) {
-        worker = {
-          sessionId: row.external_id,
-          system: row.system,
-          status: row.native_status || row.execution_state || null,
-          model: params.model ?? null,
-          route,
-        }
-        workers.set(row.session_ref_id, worker)
-        continue
-      }
-      worker.model ??= params.model ?? null
-      worker.route ??= route
-    }
-    return {
-      task: { ...dashboardTask(root), workerCount: workers.size, verification: this.ledger.acceptanceStatus(taskId), steps: this.ledger.listTaskSteps(taskId) },
-      workers: [...workers.values()],
-    }
-  }
+  dashboardTaskDetail(taskId) { return dashboardTaskDetail(this, taskId) }
 
   listTasks({ state = null, limit = 50 } = {}) {
     const clauses = []
@@ -1087,13 +1049,21 @@ export class PersonalAgentService {
     return discoverExecutionTargets(this, args).candidates
   }
 
+  /** Execute a snapshot read off the Host thread; no background service runs in the reader. */
+  readQuery(kind, args = {}, { signal = null } = {}) {
+    this.assertMemoryAvailable()
+    const { signal: inputSignal, ...input } = args
+    const settings = Object.fromEntries(['maxHistoryRecordBytes','historyRetentionDays','candidateReviewDays','memoryExtractionRetryLimit','routeCandidateLimit','routeResumeThreshold'].map(key => [key, this.config[key]]))
+    return this.queryReader.run({ kind, args: input, now: this.ledger.clock(), settings, extractionRunning: !!this.memory.running, historyRead: this.flags.enabled('history.read') }, { signal: signal ?? inputSignal })
+  }
+
   backgroundModelSelection() {
     const policy = this.config.backgroundModelPolicy ? this.config.modelPolicies[this.config.backgroundModelPolicy] : null
     return policy ? { provider: policy.provider, model: policy.model, ...(policy.effort ? { reasoningEffort: policy.effort } : {}) } : this.context?.agentDefaultModel?.currentSelection?.()
   }
 
   async semanticCandidates(args) {
-    const discovery = discoverExecutionTargets(this, args)
+    const discovery = await this.readQuery('discover', args, { signal: args.signal })
     const candidates = discovery.candidates
     if (args.explicitTaskId || args.taskId || args.sessionTaskId || args.sessionId || !this.config.semanticRoutingEnabled || !candidates.length || !this.context?.sessionController) return discovery
     const analysis = await this.analysisRuns.run({
@@ -1150,24 +1120,34 @@ export class PersonalAgentService {
     return execution
   }
 
-  async canonicalWorkspacePath(workspacePath, { requireAllowed = false } = {}) {
-    if (!path.isAbsolute(workspacePath ?? '')) throw new Error('workspacePath must be absolute')
-    const canonicalPath = await realpath(workspacePath)
-    if (!(await stat(canonicalPath)).isDirectory()) throw new Error('workspacePath must be an existing directory')
-    if (requireAllowed) {
-      if (!this.config.allowedWorkspaceRoots.length) throw new Error('Codex workspace mutation requires an explicitly configured allowedWorkspaceRoots entry')
-      let allowed = false
-      for (const configuredRoot of this.config.allowedWorkspaceRoots) {
-        const root = await realpath(configuredRoot)
-        const relative = path.relative(root, canonicalPath)
-        if (relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) {
-          allowed = true
-          break
-        }
+  async canonicalWorkspacePath(workspacePath, { requireAllowed = false, allowMissing = false } = {}) {
+    const canonical = await canonicalDirectory(workspacePath, { allowMissing })
+    if (requireAllowed) await assertAllowedDirectory(canonical, this.config.allowedWorkspaceRoots)
+    return canonical
+  }
+
+  /** Resolve a new worker's own default without inheriting the main session directory. */
+  async defaultWorkerWorkspace(worker, objective, { callerWorkspaceRoot = null, signal = null } = {}) {
+    const authorize = async (directory, options = {}) => {
+      const canonical = await this.canonicalWorkspacePath(directory, { ...options, requireAllowed: true })
+      if (callerWorkspaceRoot) {
+        const caller = await this.canonicalWorkspacePath(callerWorkspaceRoot)
+        if (!directoryWithin(caller, canonical)) throw new Error('workspacePath is outside the caller workspace')
       }
-      if (!allowed) throw new Error('workspacePath is outside the configured Codex workspace allowlist')
+      return canonical
     }
-    return canonicalPath
+    signal?.throwIfAborted()
+    if (worker === 'dsh_subagent') {
+      const initialized = await this.context?.workspaceController?.initializeDefault(signal ?? this.workerLifetime.signal)
+      signal?.throwIfAborted()
+      if (!initialized?.workspace?.path) throw Object.assign(new Error('无法取得 DSH 默认工作区，请明确指定任务目录。'), { code: 'DSH_DEFAULT_WORKSPACE_UNAVAILABLE' })
+      return await authorize(initialized.workspace.path)
+    }
+    if (worker !== 'codex') throw new Error('Unsupported default workspace worker')
+    if (!this.adapter.initialized) await this.connectCodex()
+    const root = await codexDefaultWorkspaceRoot(this.adapter)
+    signal?.throwIfAborted()
+    return await createCodexWorkspace({ root, objective, authorize, signal })
   }
 
   activeTurnWorkspaceAuthority({ taskId, threadId, turnId, workspacePath }) {
@@ -1265,10 +1245,15 @@ export class PersonalAgentService {
       const model=policy.model ?? {}
       args={...args,worker:policy.worker,agentPreset:policy.agentPreset,model:args.model??model.model,modelProvider:args.modelProvider??model.provider,effort:args.effort??model.effort,resolvedPolicy:policy}
     }
-    if (!args.workspacePath && args.mutatesWorkspace !== false) {
-      const inherited=callerWorkspaceRoot ?? (agent && this.context?.workingDirectory ? await this.context.workingDirectory.ensure(agent,signal) : null)
+    if (args.worker === 'codex' && !this.config.codexWorkerEnabled) throw new Error('Codex worker is disabled by plugin configuration')
+    if (args.worker === 'dsh_subagent' && !this.config.dshWorkerEnabled) throw new Error('DSH worker is disabled by plugin configuration')
+    if (args.worker === 'codex' && !codexMutationAuthority && !this.isAssistantSession(agent?.session?.id) && !callerWorkspaceRoot) throw new Error('Agent-bound caller workspace context is required for execution requests')
+    if (!args.workspacePath && !resolution.continuing && !resolution.fork && args.worker !== 'internal') {
+      args = { ...args, workspacePath: await this.defaultWorkerWorkspace(args.worker, objective, { callerWorkspaceRoot, signal }) }
+    } else if (!args.workspacePath && args.worker === 'internal' && args.mutatesWorkspace !== false) {
+      const inherited = callerWorkspaceRoot ?? (agent && this.context?.workingDirectory ? await this.context.workingDirectory.ensure(agent, signal) : null)
       if (!inherited) throw new Error('Execution requires workspacePath or explicit mutatesWorkspace:false')
-      args={...args,workspacePath:inherited}
+      args = { ...args, workspacePath: inherited }
     }
     if (args.stepId && !args.taskId) throw new Error('stepId requires an explicit taskId')
     args=await associateExecutionTask(this,args,resolution,{callerWorkspaceRoot})
@@ -1638,8 +1623,8 @@ export class PersonalAgentService {
       fromSeq=checked.startSeq
       if (!args.dshDirectoryExplicit) args={...args,workspacePath:checked.cwd}
     }
-    const directory=args.workspacePath ?? await this.context.workingDirectory.ensure(agent,signal)
-    args={...args,workspacePath:await this.canonicalWorkspacePath(directory,{requireAllowed:false})}
+    const directory=args.workspacePath
+    args={...args,workspacePath:await this.canonicalWorkspacePath(directory,{requireAllowed:true})}
     signal?.throwIfAborted()
     if (callerWorkspaceRoot && args.workspacePath) {
       const callerRoot = await this.canonicalWorkspacePath(callerWorkspaceRoot, { requireAllowed: false })
@@ -1736,8 +1721,9 @@ export class PersonalAgentService {
             combinedSignal.throwIfAborted()
             if (target.status!=='idle' || target.inbox.nextTurn.length || target.inbox.nextStep.length) throw Object.assign(new Error('原会话已开始另一轮工作，请稍后续接。'),{code:'EXECUTION_SESSION_BUSY'})
             const directories=this.context.workingDirectory
+            await this.canonicalWorkspacePath(args.workspacePath, { requireAllowed: true })
             if (args.dshDirectoryExplicit) await directories.set(target,args.workspacePath,combinedSignal)
-            const current=await this.canonicalWorkspacePath(await directories.ensure(target,combinedSignal),{requireAllowed:false})
+            const current=await this.canonicalWorkspacePath(await directories.ensure(target,combinedSignal),{requireAllowed:true})
             if (current!==args.workspacePath) throw Object.assign(new Error('原会话目录在派发前发生变化，请重新执行请求。'),{code:'EXECUTION_DIRECTORY_CHANGED'})
             directoryPrepared=true
           } catch (error) {directoryFailure=error;throw error}
@@ -1766,6 +1752,8 @@ export class PersonalAgentService {
         return {triggerId,routeDecisionId,taskId:task.taskId,worker:'dsh_subagent',executionId:planned.executionId,childId,accepted:true,executionState:'running',acceptanceRequired:true}
       }
       this.workerHandles.set(planned.executionId,{cancel:()=>localAbort.abort(new DOMException('Worker cancelled','AbortError'))})
+      await this.canonicalWorkspacePath(args.workspacePath, { requireAllowed: true })
+      combinedSignal.throwIfAborted()
       startupUncertain = true
       activation = await subagents.startActivation({
         childId,
@@ -1854,6 +1842,7 @@ export class PersonalAgentService {
       if (!authority) throw new Error('Codex steer requires an owned active turn with a complete baseline and active workspace lease')
     }
     if (!this.adapter.initialized) await this.connectCodex()
+    if (['thread/start', 'thread/fork'].includes(args.method)) await this.canonicalWorkspacePath(args.params.cwd, { requireAllowed: true })
     let locationId = null
     let baselineId = null
     let leaseId = null
@@ -1927,28 +1916,13 @@ export class PersonalAgentService {
       trustLevel: 'user', authorRole: 'user', sessionRefId, sourceType: sourceKind, memory: 'temporary' })
   }
 
-  async manageMemory(args = {}, { actor = 'operator', agent = null } = {}) {
+  async manageMemory(args = {}, { actor = 'operator', agent = null, signal = null } = {}) {
     if (this.memoryInitializationOperation) this.assertMemoryAvailable()
     if (this.disposed) throw new Error('Personal-agent service is disposed')
     switch (args.action) {
-      case 'list': return this.memory.list(args)
-      case 'get': {
-        if (args.historyMessageId) return this.ledger.history.message(args.historyMessageId)
-        if (args.sessionTaskId) return this.ledger.history.get(args.sessionTaskId, {offset: args.offset ?? 0,limit: args.limit ?? 30,version:args.version})
-        const memory = args.memoryId ? this.memory.get(args.memoryId) : null
-        if (memory) return memory
-        const entity = args.entityId ? this.memory.getEntity(args.entityId) : null
-        if (entity) return entity
-        const experience = args.evidenceId ? this.memory.getExperience(args.evidenceId) : null
-        if (experience) return experience
-        const relation = args.edgeId ? this.memory.getRelation(args.edgeId) : null
-        if (relation) return relation
-        if (!args.taskId) return null
-        const detail = this.dashboardTaskDetail(args.taskId)
-        return detail ? { type: 'task', id: detail.task.id, objective: detail.task.title, state: detail.task.state,
-          createdAt: detail.task.createdAt, updatedAt: detail.task.updatedAt, task: detail.task, workers: detail.workers } : null
-      }
-      case 'search': return this.memory.search(args.query, args)
+      case 'list': return this.readQuery('list', args, { signal })
+      case 'get': return this.readQuery('get', args, { signal })
+      case 'search': return this.readQuery('search', args, { signal })
       case 'edit-record': {
         return this.database.transaction(() => {
           const sourceText = cleanText(args.content, 4_000)
@@ -2168,14 +2142,14 @@ export class PersonalAgentService {
       case 'memory_search': {
         const filters = { includeCandidates: args.includeCandidates === true, includeHistory: args.includeHistory !== false,
           sourceSystem: args.sourceSystem ?? null, entityId: args.entityId ?? null, from: args.from ?? null, to: args.to ?? null, asOf: args.asOf ?? null }
-        const result = this.memory.search(args.query, { limit: args.limit, offset: args.offset ?? 0, ...filters })
+        const result = await this.readQuery('search', { query: args.query, limit: args.limit, offset: args.offset ?? 0, ...filters }, { signal })
         const experienceMatch = result.experiences.find(item => item.matchMode)
         const match = experienceMatch ? { mode: experienceMatch.matchMode, matchedTerms: experienceMatch.matchedTerms,
           minimumTermMatches: experienceMatch.minimumTermMatches } : { mode: 'all-terms' }
         return { ...result, retrieval: retrievalInfo(args.query, ['memories','entities','relations','experiences','tasks','sessionTasks'].some(lane => result[lane].length), filters, match) }
       }
       case 'memory_get': return this.manageMemory({ action: 'get', memoryId: args.memoryId, entityId: args.entityId,
-        evidenceId: args.evidenceId, taskId: args.taskId, sessionTaskId: args.sessionTaskId, historyMessageId: args.historyMessageId, offset: args.offset, limit: args.limit, version:args.version, edgeId: args.edgeId }, { actor, agent })
+        evidenceId: args.evidenceId, taskId: args.taskId, sessionTaskId: args.sessionTaskId, historyMessageId: args.historyMessageId, offset: args.offset, limit: args.limit, version:args.version, edgeId: args.edgeId }, { actor, agent, signal })
       case 'remember': return this.manageMemory({ ...args, action: 'remember' }, { actor, agent })
       case 'correct_memory': return this.manageMemory({ ...args, action: 'correct' }, { actor, agent })
       case 'confirm_memory': return this.manageMemory({ ...args, action: 'confirm-user-memory' }, { actor, agent })
@@ -2186,7 +2160,7 @@ export class PersonalAgentService {
         this.flags.assert('history.read')
         const filters = { sessionId:args.sessionId??null, sort:args.sort??'relevance', projectId: args.projectId ?? null, taskId: args.sessionTaskId ?? args.taskId ?? null, sourceSystem: args.sourceSystem ?? null,
           entityId: args.entityId ?? null, from: args.from ?? null, to: args.to ?? null, includeTemporary: args.includeTemporary === true }
-        const page = this.ledger.history.list({query:args.query,rawSearch:true,limit:args.limit ?? 20,offset:args.offset ?? 0,...filters})
+        const page = await this.readQuery('history', {query:args.query,rawSearch:true,limit:args.limit ?? 20,offset:args.offset ?? 0,...filters}, { signal })
         const results = page.records
         const experienceMatch = results.find(item => item.matchMode)
         const match = experienceMatch ? { mode: experienceMatch.matchMode, matchedTerms: experienceMatch.matchedTerms,
@@ -2260,6 +2234,7 @@ export class PersonalAgentService {
     this.disposed = true
     this.cancelHistory()
     this.workerLifetime.abort()
+    await this.queryReader?.close()
     if (this.codexConnectionOperation) await this.adapter?.close()
     await this.wechat?.close()
     await this.wechat?.interactions.dispose()

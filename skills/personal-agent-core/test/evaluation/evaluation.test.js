@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createFixture, loadJson } from './evaluation/fixture.js'
-import { validateDataset, observedIds } from './evaluation/run.js'
-import { recall, familyInterval, scoreAnswer } from './evaluation/score.js'
+import { createFixture, loadJson } from './fixture.js'
+import { validateDataset, observedIds } from './run.js'
+import { recall, familyInterval, scoreAnswer } from './score.js'
 
 test('evaluation corpus keeps exact evidence and source families in one split', () => {
   const corpus = loadJson('corpus.json'), cases = loadJson('cases.json')

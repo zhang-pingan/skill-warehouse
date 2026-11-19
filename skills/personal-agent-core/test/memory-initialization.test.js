@@ -234,3 +234,35 @@ test('an interrupted initialization remains visible after restart and does not r
   assert.equal(restarted.memoryInitializationView().state, 'failed')
   assert.equal(count(restarted.database.db, 'evidence'), 1)
 })
+
+
+test('initialization retains data and does not replace a reader whose termination failed', async t => {
+  const { service, db } = await setup(t)
+  evidence(service)
+  const reader = service.queryReader
+  const close = reader.close.bind(reader)
+  reader.close = async () => { throw new Error('reader termination failed') }
+  try {
+    service.initializeMemory({ confirmed: true })
+    await service.memoryInitializationOperation
+    assert.equal(service.memoryInitializationView().state, 'failed')
+    assert.equal(service.queryReader, reader)
+    assert.equal(count(db, 'evidence'), 1)
+  } finally { reader.close = close }
+})
+
+test('initialization closes the active read connection before clearing and recreates it lazily', async t => {
+  const { service } = await setup(t)
+  evidence(service)
+  const reader = service.queryReader
+  await service.readQuery('list', { type: 'memory' })
+  assert.ok(reader.worker)
+  service.initializeMemory({ confirmed: true })
+  await service.memoryInitializationOperation
+  assert.equal(service.memoryInitializationView().state, 'succeeded')
+  assert.equal(reader.closed, true)
+  assert.equal(reader.worker, null)
+  assert.notEqual(service.queryReader, reader)
+  assert.equal(service.queryReader.worker, null)
+  await service.readQuery('list', { type: 'memory' })
+})

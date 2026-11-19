@@ -34,7 +34,7 @@ export const TOOL = {
     dependencies: { type: 'array', maxItems: 32, items: { type: 'string' } }, correction: { type: 'object', additionalProperties: true }, outcome: { type: 'string', enum: ['accepted','corrected','rejected'] }, routeDecisionId: { type: 'string' },
     input: { type: 'object', additionalProperties: true }, full: { type: 'boolean' },
     method: { type: 'string' }, params: { type: 'object', additionalProperties: true },
-    workspacePath: { type: 'string', description: 'Execution directory. DSH continuation: omit to keep the native current directory, or supply an existing directory to switch the same session before execution.' }, projectName: { type: 'string' }, relevantPaths: { type: 'array', maxItems: 200, items: { type: 'string' } },
+    workspacePath: { type: 'string', description: 'Execution directory for either worker. Omit when continuing to keep its native current directory; omit for a new worker to use that backend’s default workspace. Explicit directories must exist. The optional shared workspace allowlist applies to both backends.' }, projectName: { type: 'string' }, relevantPaths: { type: 'array', maxItems: 200, items: { type: 'string' } },
     requestId: { type: 'string' }, sourceMessageId: { type: 'string' }, intent:{type:'string',enum:['auto','new','continue']}, newTask:{type:'boolean'}, sessionAction:{type:'string',enum:['continue','new','fork']}, sessionChangeQuote:{type:'string',description:'Exact current-user request for a new execution session or fork; required when replacing an existing session.'},
     worker: { type: 'string', enum: ['dsh_subagent','internal'], description:'For a new delegated worker, specify dsh_subagent with agentPreset cordis only for DSH plugin creation or maintenance. Otherwise omit both to use the configured default. Existing sessions retain their backend. internal records direct work.' }, provider: { type: 'string' }, agentPreset: { type: 'string' }, label: { type: 'string' }, name: { type: 'string' }, output: { type: 'string' }, result: { type: 'string' }, mutatesWorkspace: { type: 'boolean' }, acceptance: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'string' } }, acceptanceState: { type: 'string', enum: ['passed','failed','pending'] }, acceptanceSummary: { type: 'string' }, criterionId: { type: 'string', description: 'Use the id from get_task verification.criteria or step verification.criteria, not the requirement text.' }, evidenceIds: { type: 'array', maxItems: 32, items: { type: 'string' }, description: 'Use the worker result evidenceId or get_task verification.evidenceIds for this execution. Historical message IDs are not evidence IDs.' }, executionId: { type: 'string' }, includeTemporary: { type: 'boolean' },
     model: { type: 'string' }, modelProvider: { type: 'string' }, effort: { type: 'string' }, personality: { type: 'string' }, developerInstructions: { type: 'string' },
@@ -108,12 +108,18 @@ export function apply(ctx, pluginConfig = {}) {
       if (rejection !== undefined) { res.statusCode = rejection; res.end(); return }
       const methods = Array.isArray(method) ? method : [method]
       if (!methods.includes(req.method)) { res.setHeader('Allow', methods.join(', ')); json(res, 405, { error: `Method must be ${methods.join(' or ')}` }); return }
+      const controller = new AbortController()
+      const disconnect = () => { if (!res.writableEnded) controller.abort(new Error('HTTP client disconnected')) }
+      res.once?.('close', disconnect)
       try {
         if (beforeReady) await beforeReady(req)
         await ready
+        controller.signal.throwIfAborted()
         const maintenance = routePath === '/memory/initialization' || routePath === '/memory/extraction' || routePath === '/session/reset'
-        json(res, 200, await (maintenance ? handler(req) : service.request(() => handler(req))))
-      } catch (error) { json(res, error.statusCode ?? 400, { error: failureText(error), code: error.code ?? null }) }
+        const value = await (maintenance ? handler(req, controller.signal) : service.request(() => handler(req, controller.signal)))
+        if (!controller.signal.aborted) json(res, 200, value)
+      } catch (error) { if (!controller.signal.aborted) json(res, error.statusCode ?? 400, { error: failureText(error), code: error.code ?? null }) }
+      finally { res.off?.('close', disconnect) }
     } })
     for (const asset of assets) disposers.push(ctx.webServer.register({ kind: 'exact', path: BASE + '/assets/' + asset.name, handler: (req, res) => {
       const rejection = requestRejection(ctx.connection, req)
@@ -188,12 +194,12 @@ export function apply(ctx, pluginConfig = {}) {
       })
       return { ...await settingsView(), codexChange }
     }))
-    disposers.push(route('/memory', ['GET','POST'], async req => {
-      if (req.method === 'POST') return service.manageMemory(await requestJson(req), { actor: 'operator' })
+    disposers.push(route('/memory', ['GET','POST'], async (req, signal) => {
+      if (req.method === 'POST') return service.manageMemory(await requestJson(req), { actor: 'operator', signal })
       const params = new URL(req.url, 'http://localhost').searchParams
       return service.manageMemory({ action: 'list', type: params.get('type') ?? 'all', query: params.get('query') ?? '', state: params.get('state'),
         version:params.get('version'), rawSearch: params.get('rawSearch') === 'true', sourceSystem: params.get('source'), entityId: params.get('entityId'), from: params.get('from'), to: params.get('to'),
-        limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) })
+        limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }, { signal })
     }))
     disposers.push(route('/memory/extraction', 'GET', req => service.memoryExtractionView({cursor:new URL(req.url,'http://localhost').searchParams.get('cursor')})))
     disposers.push(route('/memory/initialization', ['GET', 'POST'], async req => {
@@ -202,9 +208,9 @@ export function apply(ctx, pluginConfig = {}) {
       if (!body || Object.keys(body).length !== 1 || body.confirmed !== true) throw new TypeError('confirmed must be the only field and must be true')
       return service.initializeMemory(body)
     }))
-    disposers.push(route('/memory/item', 'GET', async req => {
+    disposers.push(route('/memory/item', 'GET', async (req, signal) => {
       const params = new URL(req.url, 'http://localhost').searchParams
-      return service.manageMemory({ action: 'get', memoryId: params.get('memoryId'), entityId: params.get('entityId'), evidenceId: params.get('evidenceId'), taskId: params.get('taskId'), historyMessageId:params.get('historyMessageId'), sessionTaskId: params.get('sessionTaskId'), offset:Number(params.get('offset')??0), version:params.get('version'), edgeId: params.get('edgeId') })
+      return service.manageMemory({ action: 'get', memoryId: params.get('memoryId'), entityId: params.get('entityId'), evidenceId: params.get('evidenceId'), taskId: params.get('taskId'), historyMessageId:params.get('historyMessageId'), sessionTaskId: params.get('sessionTaskId'), offset:Number(params.get('offset')??0), version:params.get('version'), edgeId: params.get('edgeId') }, { signal })
     }))
     disposers.push(route('/task', 'GET', async req => {
       const taskId = new URL(req.url, 'http://localhost').searchParams.get('id')
@@ -238,8 +244,8 @@ export function apply(ctx, pluginConfig = {}) {
       error.statusCode = 403
       throw error
     }
-    disposers.push(route('/operate', 'POST', async req => {
-      return service.operate(await requestJson(req), { actor: 'operator', codexMutationAuthority: true, featureAuthority: true, approvalAuthority: true })
+    disposers.push(route('/operate', 'POST', async (req, signal) => {
+      return service.operate(await requestJson(req), { actor: 'operator', signal, codexMutationAuthority: true, featureAuthority: true, approvalAuthority: true })
     }, { beforeReady: requireOperator }))
     disposers.push(...registerWechatInteractions(ctx, ready, () => service.wechat.interactions))
     disposers.push(ctx.on('session/event', (session,event) => {
